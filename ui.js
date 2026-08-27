@@ -326,7 +326,11 @@
     var r = await PTT.stop();
     if (!r.ok) { say('Did not catch that (' + r.error + ').', true); return; }
     if (!r.text) { say('Did not catch that. Say one of: ' + Object.keys(VOICE_ACTIONS).slice(0, 4).join(', ') + '…', true); return; }
-    say('“' + r.text + '”');
+    /* engine names which recogniser actually answered ("whisper" or
+       "windows") so a stopped sidecar silently falling back reads as a
+       falling-back accuracy dip, not a mysteriously worse model. Only the
+       fallback is called out -- the normal case (whisper) stays quiet. */
+    say('“' + r.text + '”' + (r.engine && r.engine !== 'whisper' ? ' · ' + r.engine : ''));
     /* normalizeSpoken() strips whisper's capital + terminal punctuation before
        the lookup, and runVoice() below gets the SAME normalised string -- it
        does its own exact-key lookup, so a mismatch there would silently drop

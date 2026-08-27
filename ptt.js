@@ -103,7 +103,12 @@ window.PTT = (function () {
     var wav = encodeWav(downsample(all, rate, 16000), 16000);
     var r = await B.call('/v1/voice/listen', 'POST', { audio: toBase64(wav) });
     if (!r || !r.ok) return { ok: false, error: (r && (r.error || 'HTTP ' + r.status)) || 'no reply' };
-    return { ok: true, text: (r.data && r.data.text) || '', mode: r.data && r.data.mode };
+    return {
+      ok: true,
+      text: (r.data && r.data.text) || '',
+      mode: r.data && r.data.mode,
+      engine: r.data && r.data.engine
+    };
   }
 
   return { start: start, stop: stop, isActive: function () { return active; } };

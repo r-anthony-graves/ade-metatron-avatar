@@ -540,7 +540,9 @@ function startSmokeRun() {
         ipcMain.handle('ade:call', handleAdeCall);
       }
       pttSmoke.dispatched = dispatched;
-      pttSmoke.noDispatch = dispatched.indexOf('/v1/terminal') === -1 && dispatched.indexOf('/v1/tasks') === -1;
+      pttSmoke.noDispatch = dispatched.indexOf('/v1/terminal') === -1
+        && dispatched.indexOf('/v1/tasks') === -1
+        && dispatched.every((p) => p.indexOf('/v1/approvals') !== 0);
       pttSmoke.ok = pttSmoke.barValue === '!git status' && pttSmoke.barOpen === true && pttSmoke.noDispatch === true;
     } catch (e) { pttSmoke = { error: String((e && e.message) || e) }; }
     voice.pttSmoke = pttSmoke;

@@ -80,12 +80,20 @@ transforming the displayed text back the other way, so a bug in the
 pretty-printer cannot pass by being mirrored in the check.
 
 The tray menu item works regardless of hotkeys. Audio is captured as raw PCM, downsampled to
-16 kHz mono 16-bit WAV, and posted to `/v1/voice/listen` — Windows' own offline
-recogniser. Nothing leaves the machine and nothing is written to disk.
+16 kHz mono 16-bit WAV, and posted to `/v1/voice/listen`. Nothing leaves the
+machine and nothing is written to disk either way.
 
-The vocabulary is constrained rather than free dictation, which is both more
-reliable and more honest about what can be asked. `GET /v1/voice/phrases`
-returns the current list:
+**Recognition is open vocabulary now.** A whisper.cpp sidecar on loopback
+(`:1242`) answers first — say anything, not just a fixed phrase list. The
+response's `engine` field says which recogniser actually answered
+(`"whisper"` or `"windows"`); when it is not `"whisper"` the spoken text in
+the command bar's reply is suffixed ` · windows` so a stopped sidecar reads
+as a fallback, never as a silently worse model.
+
+Windows' own constrained-grammar recogniser is the **floor**: it only
+answers when the sidecar is down, and only the phrases below still resolve
+to a direct action. `GET /v1/voice/phrases` returns the current list. Say
+one of these and it fires straight away, on either engine:
 
 | Say | What happens |
 |---|---|
@@ -94,6 +102,11 @@ returns the current list:
 | run the tests | dispatches a task |
 | read the file | opens the command bar primed for you to finish typing |
 | open the command bar / stop | drives the avatar itself |
+
+Anything else is open speech: it is rewritten through the same leading-word
+prefixes the command bar understands when typed (`shell …` → `!`, `ask …` →
+`?`, `task <type> …` → `/<type>`) and dropped into the bar for you to review
+and press Enter — it is never dispatched on recognition alone.
 
 ### Voice cannot approve anything
 
