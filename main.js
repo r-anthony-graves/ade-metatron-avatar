@@ -448,6 +448,26 @@ function startSmokeRun() {
       keys.ok = keys.hintMatchesBinding && keys.takesNoOsKey;
     } catch (e) { keys = { error: String((e && e.message) || e) }; }
 
+    /* Speech cannot carry the bar's prefixes -- classify() keys on "!", "?"
+       and "/", none of them speakable. The rewrite is what lets one classifier
+       serve both, and shell must still require a human beat. */
+    let voice = {};
+    try {
+      voice = JSON.parse(await win.webContents.executeJavaScript(
+        'JSON.stringify({' +
+        ' shell: window.__spokenToTyped("shell git status"),' +
+        ' ask: window.__spokenToTyped("ask what brain are you on"),' +
+        ' task: window.__spokenToTyped("task qa run the suite"),' +
+        ' bare: window.__spokenToTyped("run the trust level tests") })'));
+      voice.rewrites = {
+        shell: voice.shell, ask: voice.ask, task: voice.task, bare: voice.bare,
+      };
+      voice.ok = voice.shell === '!git status'
+              && voice.ask === '?what brain are you on'
+              && voice.task === '/qa run the suite'
+              && voice.bare === 'run the trust level tests';
+    } catch (e) { voice = { error: String((e && e.message) || e) }; }
+
     let hit = {};
     try {
       const settle = (ms) => new Promise(r => setTimeout(r, ms || 160));
@@ -484,6 +504,7 @@ function startSmokeRun() {
       clickThrough: !!cfg.clickThrough,
       interact,
       hit,
+      voice,
       keys,
       rendererErrors: (smokeLogs || []).slice(0, 6),
       frameless: !win.isResizable(),

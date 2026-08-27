@@ -158,6 +158,32 @@
     out.classList.toggle('err', !!isErr);
   }
 
+  /* ---------------------------------------------------- spoken -> typed */
+  /* You cannot say "!". classify() keys on the first character, so a leading
+     spoken keyword is rewritten into the prefix it means and the SAME
+     classifier then runs. One set of rules: a second classifier for speech
+     would be a second thing to keep in step, and the two would drift.
+
+     The keywords are ordinary English words, so "ask Ade what the backlog is"
+     becomes an ask rather than a task. That ambiguity is known and accepted
+     for now -- see the spec's Assumptions section. */
+  var SPOKEN_PREFIX = [
+    { re: /^\s*shell\s+/i, out: '!' },
+    { re: /^\s*ask\s+/i, out: '?' },
+    { re: /^\s*task\s+(\S+)\s+/i, out: '/' }
+  ];
+  function spokenToTyped(text) {
+    var v = String(text == null ? '' : text).trim();
+    for (var i = 0; i < SPOKEN_PREFIX.length; i++) {
+      var m = v.match(SPOKEN_PREFIX[i].re);
+      if (!m) continue;
+      if (SPOKEN_PREFIX[i].out === '/') return '/' + m[1] + ' ' + v.slice(m[0].length);
+      return SPOKEN_PREFIX[i].out + v.slice(m[0].length);
+    }
+    return v;
+  }
+  window.__spokenToTyped = spokenToTyped;   /* --smoke reaches it here */
+
   function classify(raw) {
     var v = raw.trim();
     if (v.charAt(0) === '!') return { kind: 'shell', text: v.slice(1).trim() };
@@ -290,7 +316,17 @@
     if (!r.ok) { say('Did not catch that (' + r.error + ').', true); return; }
     if (!r.text) { say('Did not catch that. Say one of: ' + Object.keys(VOICE_ACTIONS).slice(0, 4).join(', ') + '…', true); return; }
     say('“' + r.text + '”');
-    runVoice(r.text);
+    if (VOICE_ACTIONS[String(r.text).trim().toLowerCase()]) { runVoice(r.text); return; }
+    /* Open speech. Shell gets the same beat typing has: it lands in the bar
+       with its amber "ungated" chip and waits for Enter. /v1/terminal has no
+       gate in front of it, so removing the pause for voice would make speech
+       MORE powerful than typing against the one path with no gate. */
+    var typed = spokenToTyped(r.text);
+    toggleBar(true);
+    input.value = typed;
+    paintMode();
+    input.focus();
+    if (classify(typed).kind !== 'shell') input.select();
   }
 
   /* ---------------------------------------------------------- approvals */
