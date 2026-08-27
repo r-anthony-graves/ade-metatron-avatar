@@ -1,0 +1,14 @@
+{
+  "name": "adeos-avatar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Metatron desktop avatar for Ade OS - a transparent always-on-top glyph that reflects Ade's state and drives it",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "icon": "node tools/make-icon.js"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0"
+  }
+}
