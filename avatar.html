@@ -41,6 +41,18 @@
   #mode.shell { color:#fff;    border-color:var(--red); background:var(--red); }
   #mode.ask   { color:#8a5a08; border-color:rgba(245,166,35,.65); background:rgba(245,166,35,.13); }
 
+  /* The mute control. An always-open microphone with no visible state is the
+     bad version of this feature, so the button states what is true rather
+     than what you may do to it -- and `muted` is loud, because a stopped
+     track is the safe state and you should be able to see it across a room. */
+  #mic {
+    flex:0 0 auto; font-size:9.5px; letter-spacing:.12em; text-transform:uppercase;
+    border:1px solid rgba(110,118,129,.5); border-radius:3px; padding:3px 6px;
+    background:rgba(255,255,255,.5); color:var(--steel); cursor:pointer;
+  }
+  #mic:hover { border-color:var(--steel); }
+  #mic.muted { color:#fff; background:var(--red); border-color:var(--red); }
+
   #in {
     flex:1 1 auto; min-width:0; background:rgba(255,255,255,.62); color:var(--ink);
     border:1px solid var(--line); border-radius:5px;
@@ -90,6 +102,7 @@
   <div id="bar">
     <div class="row">
       <span id="mode" class="task">Task</span>
+      <button id="mic" type="button" title="The microphone is open. Click to stop the track.">Mute</button>
       <input id="in" type="text" spellcheck="false" autocomplete="off"
              placeholder="Tell Ade what to do…">
     </div>

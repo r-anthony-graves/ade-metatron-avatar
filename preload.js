@@ -24,6 +24,9 @@ contextBridge.exposeInMainWorld('adeBridge', {
   onBacking: (fn) => ipcRenderer.on('ui:backing', (_e, on) => fn(on)),
   onSpeak: (fn) => ipcRenderer.on('ui:speak', (_e, t) => fn(t)),
   onHush: (fn) => ipcRenderer.on('ui:hush', () => fn()),
+  /* the renderer owns the mic; it reports state, main mirrors it in the tray */
+  micState: (live) => ipcRenderer.send('mic:state', !!live),
+  onMicToggle: (fn) => ipcRenderer.on('ui:micToggle', () => fn()),
   onPttDown: (fn) => ipcRenderer.on('ui:pttDown', () => fn()),
   onPttUp: (fn) => ipcRenderer.on('ui:pttUp', () => fn()),
 

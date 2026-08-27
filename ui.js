@@ -19,6 +19,7 @@
   var approve = document.getElementById('approve');
   var approveWhat = document.getElementById('approveWhat');
   var hint = document.getElementById('hint');
+  var micBtn = document.getElementById('mic');
   /* innerHTML, not textContent: assigning textContent flattens the hint into a
      single text node and destroys every element inside it -- which it did on
      the very first paintMode(), taking the bold keys and the hotkey slot with
@@ -311,6 +312,33 @@
     if (await B.speakEnabled()) speakText(text);
   }
 
+  /* ------------------------------------------------------- wake word */
+  /* The mic is open all the time now, so something has to separate "Ray is
+     talking to Ade" from "Ray is talking". Measured against the real engine
+     before being chosen, which is the step that was skipped for the shell/
+     task keywords: whisper hears "Ade", "Hey Ade" and "Ada" all as `Ade`,
+     so the word is forgiving of how it is said. It also drops the comma
+     about half the time, hence the optional separator. */
+  var WAKE = /^\s*(?:hey\s+|ok\s+)?ad[ae]y?\s*[,.!?:-]?\s+/i;
+
+  function stripWake(text) {
+    var m = String(text == null ? '' : text).match(WAKE);
+    return m ? String(text).slice(m[0].length).trim() : null;
+  }
+  window.__stripWake = stripWake;    /* --smoke reaches it here */
+
+  /* One utterance from the open microphone. Everything that is not addressed
+     to Ade is dropped here, before any classification and before anything
+     could be dispatched. */
+  function onUtterance(u) {
+    if (!u || !u.text) return;
+    var command = stripWake(u.text);
+    if (command === null) return;                  /* not for us: discard */
+    if (!command) { toggleBar(true); say('Listening.'); return; }
+    handleSpoken(command, u.engine);
+  }
+  window.__onUtterance = onUtterance;
+
   async function pttDown() {
     if (!B || PTT.isActive()) return;
     var ok = await PTT.start(function (lvl) { if (window.GLYPH) window.GLYPH.setSpeaking(lvl * 0.7); });
@@ -331,24 +359,33 @@
        falling-back accuracy dip, not a mysteriously worse model. Only the
        fallback is called out -- the normal case (whisper) stays quiet. */
     say('“' + r.text + '”' + (r.engine && r.engine !== 'whisper' ? ' · ' + r.engine : ''));
+    handleSpoken(r.text, r.engine);
+  }
+
+  /* The one place recognised speech becomes an action, shared by the hotkey
+     and by the always-live microphone. Two callers, one set of rules -- the
+     same reason spoken keywords are rewritten into the typed bar's prefixes
+     rather than given a classifier of their own. */
+  function handleSpoken(text, engine) {
     /* normalizeSpoken() strips whisper's capital + terminal punctuation before
-       the lookup, and runVoice() below gets the SAME normalised string -- it
-       does its own exact-key lookup, so a mismatch there would silently drop
-       a matching phrase to the open-speech path. spokenToTyped() below still
-       gets the raw r.text, punctuation and all. */
-    var spoken = normalizeSpoken(r.text);
+       the lookup, and runVoice() gets the SAME normalised string -- it does its
+       own exact-key lookup, so a mismatch there would silently drop a matching
+       phrase to the open-speech path. spokenToTyped() below still gets the raw
+       text, punctuation and all. */
+    var spoken = normalizeSpoken(text);
     if (VOICE_ACTIONS[spoken]) { runVoice(spoken); return; }
     /* Open speech. Shell gets the same beat typing has: it lands in the bar
        with its amber "ungated" chip and waits for Enter. /v1/terminal has no
        gate in front of it, so removing the pause for voice would make speech
        MORE powerful than typing against the one path with no gate. */
-    var typed = spokenToTyped(r.text);
+    var typed = spokenToTyped(text);
     toggleBar(true);
     input.value = typed;
     paintMode();
     input.focus();
     if (classify(typed).kind !== 'shell') input.select();
   }
+  window.__handleSpoken = handleSpoken;
   window.__pttUp = pttUp;   /* --smoke drives the real path with a stubbed PTT here */
 
   /* ---------------------------------------------------------- approvals */
@@ -387,6 +424,36 @@
     B.onNote(function (m) { toggleBar(true); say(m); });
     B.onSpeak(function (t) { speakText(t); });
     B.onHush(function () { stopSpeaking(); });
+    /* ------------------------------------------------ the live mic */
+    /* Live at launch, per Ray. `mic` defaults TRUE when the key is absent so
+       a fresh install behaves as asked; the tray toggle writes it. */
+    function setMicUi() {
+      var live = window.PTT && window.PTT.isLive && window.PTT.isLive();
+      if (window.GLYPH && window.GLYPH.setMic) window.GLYPH.setMic(live ? 1 : 0);
+      if (micBtn) {
+        micBtn.textContent = live ? 'Mute' : 'Unmute';
+        micBtn.classList.toggle('muted', !live);
+        micBtn.title = live ? 'The microphone is open. Click to stop the track.'
+                            : 'The microphone track is stopped. Click to reopen.';
+      }
+      if (B) B.micState(!!live);
+    }
+    window.__setMicUi = setMicUi;
+
+    async function micOn() {
+      var ok = await window.PTT.live(onUtterance, function (lvl) {
+        if (window.GLYPH) window.GLYPH.setSpeaking(lvl * 0.55);
+      });
+      if (!ok) say('Could not open the microphone.', true);
+      setMicUi();
+      return ok;
+    }
+    function micOff() { window.PTT.mute(); if (window.GLYPH) window.GLYPH.setSpeaking(0); setMicUi(); }
+    async function micToggle() { if (window.PTT.isLive()) micOff(); else await micOn(); }
+    window.__micToggle = micToggle;
+    if (micBtn) micBtn.addEventListener('click', function () { void micToggle(); });
+    B.onMicToggle(function () { void micToggle(); });
+
     B.onPttDown(function () { pttDown(); });
     B.onPttUp(function () { pttUp(); });
     B.onBacking(function (on) { if (window.GLYPH) window.GLYPH.setBacking(on); });
@@ -404,6 +471,7 @@
       HINT = hint.innerHTML;     /* HINT was captured before this resolved */
     });
     B.config().then(function (c) {
+      if (c && c.mic !== false) { void micOn(); } else { setMicUi(); }
       if (c && window.GLYPH) window.GLYPH.setBacking(c.backing !== false);
     });
     B.state().then(function (s) { if (s && window.GLYPH) window.GLYPH.setAde(s); });

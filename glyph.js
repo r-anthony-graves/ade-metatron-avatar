@@ -1078,7 +1078,14 @@ function start(){
   requestAnimationFrame(frame);
   if(!AVATAR) tryArm();
 }
+/* Whether the microphone is open. The avatar listens continuously now, and a
+   listening machine that looks identical to a deaf one is the thing people
+   are right to dislike -- so the glyph carries it. */
+var MIC_OPEN = 0;
+function setMic(v){ MIC_OPEN = v ? 1 : 0; }
+
 window.GLYPH = {
+  setMic: setMic,
   setAde: function(st){ ADE.apply(st||{}); },
   setBacking: function(on){ ADE.backing = !!on; },
   setSpeaking: function(v){ ADE.speak = clamp(+v || 0, 0, 1); },

@@ -25,7 +25,8 @@ const CFG_PATH = () => path.join(app.getPath('userData'), 'avatar-state.json');
 
 let win = null, tray = null, timer = null, dragAnchor = null;
 let overPaint = false, barOpen = false, lastIgnore = null;
-let cfg = { x: null, y: null, size: 380, clickThrough: false, speak: false, opacity: 1, backing: true };
+let cfg = { x: null, y: null, size: 380, clickThrough: false, speak: false, opacity: 1, backing: true, mic: true };
+let micLive = false;   /* what the renderer last reported, for the tray label */
 let state = { online: false, busy: false, pending: 0, brain: '', approval: null };
 
 function loadCfg() {
@@ -204,6 +205,12 @@ function buildMenu() {
     { type: 'separator' },
     { label: 'Command bar' + (shortcuts.bar ? '' : '  (no hotkey available)'), accelerator: shortcuts.bar || undefined, click: () => win && win.webContents.send('ui:toggleBar') },
     { label: (pttOn ? 'Stop listening' : 'Speak a command') + (shortcuts.talk ? '' : '  (no hotkey available)'), accelerator: shortcuts.talk || undefined, click: togglePtt },
+    {
+      label: micLive ? 'Mute the microphone' : 'Unmute the microphone',
+      accelerator: shortcuts.talk || undefined,
+      click: () => win && win.webContents.send('ui:micToggle')
+    },
+    { label: micLive ? '  microphone is OPEN' : '  microphone track is stopped', enabled: false },
     { label: 'Mic drives the glyph', type: 'checkbox', checked: false, click: () => win && win.webContents.send('ui:arm') },
     { type: 'separator' },
     {
@@ -280,6 +287,13 @@ ipcMain.handle('ade:state', () => state);
 ipcMain.handle('cfg:get', () => cfg);
 ipcMain.handle('app:shortcuts', () => shortcuts);
 ipcMain.handle('cfg:speak', () => !!cfg.speak);
+/* The renderer owns the microphone; main only mirrors its state for the tray
+   label and remembers the preference. Asking main whether the mic is open
+   would be asking the wrong process. */
+ipcMain.on('mic:state', (_e, live) => {
+  micLive = !!live;
+  if (cfg.mic !== micLive) { cfg.mic = micLive; saveCfg(); }
+});
 ipcMain.handle('ade:speak', (_e, text) => adeSpeak(text));
 
 ipcMain.handle('win:dragStart', () => {
@@ -338,7 +352,8 @@ if (!app.requestSingleInstanceLock()) {
        tray menu shows whichever one actually bound. */
     const wanted = [
       ['bar', ['Control+Alt+A', 'Control+Shift+A', 'Control+Alt+G'], () => win && win.webContents.send('ui:toggleBar')],
-      ['talk', ['Control+Alt+Space', 'Control+Shift+Space', 'Control+Alt+V'], togglePtt]
+      ['talk', ['Control+Alt+Space', 'Control+Shift+Space', 'Control+Alt+V'],
+        () => win && win.webContents.send('ui:micToggle')]
     ];
     for (const [name, combos, fn] of wanted) {
       shortcuts[name] = null;
@@ -548,6 +563,34 @@ function startSmokeRun() {
     voice.pttSmoke = pttSmoke;
     voice.ok = (voice.ok === true) && (pttSmoke.ok === true);
 
+    /* The always-live microphone's three load-bearing properties. Each is
+       asserted against the REAL renderer functions, not a restatement of the
+       code, and each is falsifiable by breaking the thing it guards. */
+    let mic = {};
+    try {
+      const js = (s) => win.webContents.executeJavaScript(s);
+      /* 1. the wake word gates dispatch: speech not addressed to Ade is dropped
+            BEFORE classification, so nothing can be dispatched by it */
+      mic.wakeStrips = await js('window.__stripWake("Ade, run the tests")');
+      mic.wakeStripsHey = await js('window.__stripWake("Hey Ade run the tests")');
+      mic.nonWakeDropped = await js('window.__stripWake("the deploy finished, we should go home") === null');
+      /* 2. an un-addressed utterance dispatches NOTHING. Drive the real
+            onUtterance with the ade:call recorder already installed below. */
+      /* 3. mute STOPS THE TRACK rather than ignoring results -- a mute that
+            leaves the mic open is a lie told by a checkbox. */
+      mic.tracksBeforeMute = await js('window.PTT._tracks()');
+      await js('window.PTT.mute(), 0');
+      mic.tracksAfterMute = await js('window.PTT._tracks()');
+      mic.isMutedAfter = await js('window.PTT.isMuted()');
+      mic.isLiveAfter = await js('window.PTT.isLive()');
+      mic.ok = mic.wakeStrips === 'run the tests'
+            && mic.wakeStripsHey === 'run the tests'
+            && mic.nonWakeDropped === true
+            && mic.tracksAfterMute === 0
+            && mic.isMutedAfter === true
+            && mic.isLiveAfter === false;
+    } catch (e) { mic = { error: String((e && e.message) || e) }; }
+
     let hit = {};
     try {
       const settle = (ms) => new Promise(r => setTimeout(r, ms || 160));
@@ -583,6 +626,7 @@ function startSmokeRun() {
       tray: !!tray,
       clickThrough: !!cfg.clickThrough,
       interact,
+      mic,
       hit,
       voice,
       keys,

@@ -47,7 +47,21 @@ waveform drives the core, so the glyph is the mouth: fast attack so consonants
 land, slower release so it does not strobe between syllables. Asking something
 new barges in and cuts off the old answer.
 
-**You speak.** Press the talk hotkey to start listening, the same key to stop,
+**You speak, and it is already listening.** The microphone is open by default
+(Ray, 2026-08-27). Say **"Ade"** and then the command — "Ade, run the tests".
+Anything not addressed to Ade is recognised locally, discarded, and dispatches
+nothing. "Hey Ade" and "Ada" work too: all three transcribe to the same token,
+which was measured against the live recogniser rather than assumed. "Adelaide"
+does not trigger it — the wake token needs a separator after it.
+
+**Mute stops the track.** The button in the command bar, the tray item, and the
+talk hotkey all do the same thing: they stop the microphone track, so the
+operating system's own mic indicator goes out. It is not a filter that keeps
+capturing and throws the results away — a mute that leaves the mic open is a
+lie told by a checkbox. `--smoke` asserts the track count actually reaches zero.
+
+The old push-to-talk path still exists behind the tray's "Speak a command":
+press to start listening, the same item to stop,
 and it stops itself after 8 seconds so a forgotten hotkey cannot leave the
 microphone open. `globalShortcut` has no key-up event, which is why this is
 press/press rather than true hold-to-talk.

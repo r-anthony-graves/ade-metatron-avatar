@@ -111,5 +111,101 @@ window.PTT = (function () {
     };
   }
 
-  return { start: start, stop: stop, isActive: function () { return active; } };
+  /* ------------------------------------------------- always-live mode */
+  /* Ray, 2026-08-27: "i need the mic to be live by default with a mute
+     button". This REVERSES the invariant stated at the top of
+     adeos/voice/__init__.py -- "Push to talk. Nothing is always listening."
+     -- and the design doc's non-goal that said the same. Recorded here
+     rather than quietly dropped, because the next reader deserves to know
+     the rule was overturned on purpose and by whom.
+
+     Two things keep an open microphone honest, and both are load-bearing:
+
+     1. NOTHING IS SENT UNTIL SOMEONE SPEAKS. A voice-activity detector
+        segments utterances locally; silence is measured and discarded, never
+        transmitted. Audio still leaves this process only for loopback
+        recognition, and the buffers are released the moment an utterance
+        goes -- `audio is not retained` still holds.
+     2. MUTE STOPS THE TRACK. It does not keep capturing and discard the
+        results. The OS microphone indicator goes out, because a mute button
+        that leaves the mic open is a lie told by a checkbox. */
+  var live = { on: false, muted: false, stream: null, ctx: null, src: null, node: null };
+  var seg = [], hearing = false, quietMs = 0;
+  var SPEECH_RMS = 0.020;      /* below this is room tone, not speech      */
+  var HANG_MS    = 700;        /* silence that ends an utterance           */
+  var MIN_MS     = 300;        /* shorter than this is a cough, not a word */
+  var MAX_MS     = 12000;      /* a hard ceiling so one noise cannot grow  */
+
+  function releaseLive() {
+    if (live.node) { try { live.node.disconnect(); live.node.onaudioprocess = null; } catch (e) {} live.node = null; }
+    if (live.src) { try { live.src.disconnect(); } catch (e) {} live.src = null; }
+    if (live.stream) { try { live.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} live.stream = null; }
+    seg = []; hearing = false; quietMs = 0;
+  }
+
+  async function sendSegment(onUtterance) {
+    var total = 0, i;
+    for (i = 0; i < seg.length; i++) total += seg[i].length;
+    var all = new Float32Array(total), off = 0;
+    for (i = 0; i < seg.length; i++) { all.set(seg[i], off); off += seg[i].length; }
+    seg = [];                                  /* released before the await */
+    var secs = total / live.rate;
+    if (secs * 1000 < MIN_MS) return;
+    var wav = encodeWav(downsample(all, live.rate, 16000), 16000);
+    var r = await B.call('/v1/voice/listen', 'POST', { audio: toBase64(wav) });
+    if (!r || !r.ok) return;
+    var text = (r.data && r.data.text) || '';
+    if (text && onUtterance) onUtterance({ text: text, engine: r.data && r.data.engine, seconds: secs });
+  }
+
+  async function startLive(onUtterance, onLevel) {
+    if (live.on && !live.muted) return true;
+    try {
+      live.stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      });
+      if (!live.ctx) live.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (live.ctx.state === 'suspended') await live.ctx.resume();
+      live.rate = live.ctx.sampleRate;
+      live.src = live.ctx.createMediaStreamSource(live.stream);
+      live.node = live.ctx.createScriptProcessor(4096, 1, 1);
+      var bufMs = 4096 / live.rate * 1000;
+      live.node.onaudioprocess = function (e) {
+        var d = e.inputBuffer.getChannelData(0), sum = 0, i;
+        for (i = 0; i < d.length; i++) sum += d[i] * d[i];
+        var rms = Math.sqrt(sum / d.length);
+        if (onLevel) onLevel(Math.min(1, rms * 5));
+        if (rms >= SPEECH_RMS) {
+          hearing = true; quietMs = 0;
+          seg.push(new Float32Array(d));
+        } else if (hearing) {
+          quietMs += bufMs;
+          seg.push(new Float32Array(d));      /* keep the tail of the word */
+          if (quietMs >= HANG_MS) { hearing = false; quietMs = 0; sendSegment(onUtterance); }
+        }
+        if (hearing && seg.length * bufMs > MAX_MS) { hearing = false; quietMs = 0; sendSegment(onUtterance); }
+      };
+      live.src.connect(live.node); live.node.connect(live.ctx.destination);
+      live.on = true; live.muted = false;
+      return true;
+    } catch (e) {
+      releaseLive(); live.on = false;
+      return false;
+    }
+  }
+
+  function muteLive() {
+    releaseLive();                 /* the track is STOPPED, not ignored */
+    live.muted = true;
+    return true;
+  }
+
+  return {
+    start: start, stop: stop, isActive: function () { return active; },
+    live: startLive, mute: muteLive,
+    isLive: function () { return live.on && !live.muted && !!live.stream; },
+    isMuted: function () { return !!live.muted; },
+    /* --smoke reaches in here to prove mute really stops the track */
+    _tracks: function () { return live.stream ? live.stream.getTracks().length : 0; }
+  };
 })();
