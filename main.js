@@ -267,12 +267,15 @@ function createTray() {
 }
 
 /* -------------------------------------------------------------------- IPC */
-ipcMain.handle('ade:call', async (_e, pathname, method, body) => {
+/* Named, not inline, so --smoke's pttUp drive can swap it out for a recorder
+   and restore exactly this -- see startSmokeRun()'s pttSmoke block. */
+function handleAdeCall(_e, pathname, method, body) {
   if (typeof pathname !== 'string' || !pathname.startsWith('/v1/')) {
     return { ok: false, status: 0, error: 'refused: only /v1/* on the local Ade OS' };
   }
   return ade(pathname, { method: method || 'GET', body: body || null, timeout: 120000 });
-});
+}
+ipcMain.handle('ade:call', handleAdeCall);
 ipcMain.handle('ade:state', () => state);
 ipcMain.handle('cfg:get', () => cfg);
 ipcMain.handle('app:shortcuts', () => shortcuts);
@@ -486,6 +489,62 @@ function startSmokeRun() {
               && voice.shellNeedsConfirm === true
               && voice.normOk === true;
     } catch (e) { voice = { error: String((e && e.message) || e) }; }
+
+    /* shellNeedsConfirm above calls spokenToTyped() in isolation -- a pure
+       string transform with no DOM access, so "the input didn't change" is
+       true BY CONSTRUCTION and would stay true even if pttUp() were rewritten
+       to auto-submit a shell rewrite. This block exercises the REAL pttUp()
+       instead, with a stubbed recogniser, and checks that recognition alone
+       never reaches /v1/terminal -- the property this task exists to protect.
+
+       window.adeBridge.call cannot be stubbed from the renderer: contextBridge
+       deep-freezes everything it exposes (verified live: Object.isFrozen(
+       window.adeBridge) is true, and call's own property descriptor is
+       {writable:false, configurable:false} -- an assignment to it silently
+       no-ops rather than throwing). window.PTT is an ordinary object ui.js
+       builds itself, NOT frozen, so PTT.stop/isActive stub the way the plan
+       expected. What replaces the bridge stub is interception one layer
+       down, at the 'ade:call' IPC handler in THIS process -- ordinary
+       main-process code, nothing frozen about it. */
+    let pttSmoke = {};
+    try {
+      const dispatched = [];
+      ipcMain.removeHandler('ade:call');
+      ipcMain.handle('ade:call', async (_e, pathname) => {
+        dispatched.push(pathname);
+        return { ok: true, status: 200, data: { stub: true } };
+      });
+      try {
+        await win.webContents.executeJavaScript(
+          '(function(){' +
+          ' window.__pttSmokeOrigStop = window.PTT.stop;' +
+          ' window.__pttSmokeOrigActive = window.PTT.isActive;' +
+          ' window.PTT.stop = function(){ return Promise.resolve({ ok: true, text: "shell git status" }); };' +
+          ' window.PTT.isActive = function(){ return true; };' +
+          ' })()');
+        await win.webContents.executeJavaScript(
+          'window.__pttUp ? window.__pttUp() : Promise.reject(new Error("__pttUp not exposed"))');
+        await new Promise((r) => setTimeout(r, 300));   /* let send()'s IPC round trip land if it fired */
+        pttSmoke = JSON.parse(await win.webContents.executeJavaScript(
+          'JSON.stringify({' +
+          ' barValue: document.getElementById("in").value,' +
+          ' barOpen: document.getElementById("bar").classList.contains("open") })'));
+      } finally {
+        await win.webContents.executeJavaScript(
+          '(function(){' +
+          ' window.PTT.stop = window.__pttSmokeOrigStop;' +
+          ' window.PTT.isActive = window.__pttSmokeOrigActive;' +
+          ' delete window.__pttSmokeOrigStop; delete window.__pttSmokeOrigActive;' +
+          ' })()').catch(() => {});
+        ipcMain.removeHandler('ade:call');
+        ipcMain.handle('ade:call', handleAdeCall);
+      }
+      pttSmoke.dispatched = dispatched;
+      pttSmoke.noDispatch = dispatched.indexOf('/v1/terminal') === -1 && dispatched.indexOf('/v1/tasks') === -1;
+      pttSmoke.ok = pttSmoke.barValue === '!git status' && pttSmoke.barOpen === true && pttSmoke.noDispatch === true;
+    } catch (e) { pttSmoke = { error: String((e && e.message) || e) }; }
+    voice.pttSmoke = pttSmoke;
+    voice.ok = (voice.ok === true) && (pttSmoke.ok === true);
 
     let hit = {};
     try {

@@ -345,6 +345,7 @@
     input.focus();
     if (classify(typed).kind !== 'shell') input.select();
   }
+  window.__pttUp = pttUp;   /* --smoke drives the real path with a stubbed PTT here */
 
   /* ---------------------------------------------------------- approvals */
   function showApproval(a) {
