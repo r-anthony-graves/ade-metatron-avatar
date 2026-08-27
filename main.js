@@ -458,14 +458,33 @@ function startSmokeRun() {
         ' shell: window.__spokenToTyped("shell git status"),' +
         ' ask: window.__spokenToTyped("ask what brain are you on"),' +
         ' task: window.__spokenToTyped("task qa run the suite"),' +
-        ' bare: window.__spokenToTyped("run the trust level tests") })'));
+        ' bare: window.__spokenToTyped("run the trust level tests"),' +
+        ' normHealth: window.__normalizeSpoken("Check the health.") })'));
       voice.rewrites = {
         shell: voice.shell, ask: voice.ask, task: voice.task, bare: voice.bare,
       };
+      /* The property this task exists to protect: recognised shell text is
+         PREFIXED for the bar, not dispatched. Confirming voice.shell has "!"
+         only proves the rewrite is right; it says nothing about whether the
+         rewrite itself pushed the text into the bar and fired it. The second
+         clause below asserts that separately -- it reads the bar's own input
+         element after the rewrite ran and requires it to still be untouched,
+         which is what "recognition alone did not execute it" actually means. */
+      voice.shellNeedsConfirm = await win.webContents.executeJavaScript(
+        '(function(){ var before = document.getElementById("in").value;' +
+        ' var t = window.__spokenToTyped("shell git status");' +
+        ' var after = document.getElementById("in").value;' +
+        ' return t.charAt(0) === "!" && after === before; })()');
+      /* Whisper capitalises and punctuates; VOICE_ACTIONS' 9 keys are bare
+         lowercase. Confirm the normaliser used ahead of that lookup actually
+         collapses the two. */
+      voice.normOk = voice.normHealth === 'check the health';
       voice.ok = voice.shell === '!git status'
               && voice.ask === '?what brain are you on'
               && voice.task === '/qa run the suite'
-              && voice.bare === 'run the trust level tests';
+              && voice.bare === 'run the trust level tests'
+              && voice.shellNeedsConfirm === true
+              && voice.normOk === true;
     } catch (e) { voice = { error: String((e && e.message) || e) }; }
 
     let hit = {};

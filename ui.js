@@ -184,6 +184,17 @@
   }
   window.__spokenToTyped = spokenToTyped;   /* --smoke reaches it here */
 
+  /* Whisper capitalises and adds terminal punctuation ("Check the health."),
+     but VOICE_ACTIONS' 9 keys are bare lowercase phrases. Without this, every
+     one of the 9 missed the map and fell through to spokenToTyped() as open
+     speech -- turning a READ (GET /v1/health) into a dispatched TASK. Used
+     for the VOICE_ACTIONS probe only; spokenToTyped() keeps punctuation,
+     because a dictated sentence should. */
+  function normalizeSpoken(text) {
+    return String(text == null ? '' : text).trim().replace(/[.!?,;:]+$/, '').toLowerCase();
+  }
+  window.__normalizeSpoken = normalizeSpoken;   /* --smoke reaches it here */
+
   function classify(raw) {
     var v = raw.trim();
     if (v.charAt(0) === '!') return { kind: 'shell', text: v.slice(1).trim() };
@@ -316,7 +327,13 @@
     if (!r.ok) { say('Did not catch that (' + r.error + ').', true); return; }
     if (!r.text) { say('Did not catch that. Say one of: ' + Object.keys(VOICE_ACTIONS).slice(0, 4).join(', ') + '…', true); return; }
     say('“' + r.text + '”');
-    if (VOICE_ACTIONS[String(r.text).trim().toLowerCase()]) { runVoice(r.text); return; }
+    /* normalizeSpoken() strips whisper's capital + terminal punctuation before
+       the lookup, and runVoice() below gets the SAME normalised string -- it
+       does its own exact-key lookup, so a mismatch there would silently drop
+       a matching phrase to the open-speech path. spokenToTyped() below still
+       gets the raw r.text, punctuation and all. */
+    var spoken = normalizeSpoken(r.text);
+    if (VOICE_ACTIONS[spoken]) { runVoice(spoken); return; }
     /* Open speech. Shell gets the same beat typing has: it lands in the bar
        with its amber "ungated" chip and waits for Enter. /v1/terminal has no
        gate in front of it, so removing the pause for voice would make speech
