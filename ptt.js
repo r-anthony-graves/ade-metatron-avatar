@@ -129,20 +129,31 @@ window.PTT = (function () {
      2. MUTE STOPS THE TRACK. It does not keep capturing and discard the
         results. The OS microphone indicator goes out, because a mute button
         that leaves the mic open is a lie told by a checkbox. */
-  var live = { on: false, muted: false, stream: null, ctx: null, src: null, node: null };
+  var live = { on: false, muted: false, stream: null, ctx: null, src: null, node: null, an: null };
   var seg = [], hearing = false, quietMs = 0;
   var SPEECH_RMS = 0.020;      /* below this is room tone, not speech      */
-  var HANG_MS    = 700;        /* silence that ends an utterance           */
+  var HANG_MS    = 400;        /* silence that ends an utterance           */
+  /* 700 was most of the wait once the whisper sidecar was running: measured
+     2026-08-28, recognition is ~150ms end to end through /v1/voice/listen, so
+     the hang was 82% of the dead air after you stop talking. It is not free to
+     shorten -- a mid-thought pause longer than this splits one sentence into
+     two utterances, and the second half arrives with no wake word and is
+     discarded -- so this is the floor, not a number to keep cutting. */
   var MIN_MS     = 300;        /* shorter than this is a cough, not a word */
   var MAX_MS     = 12000;      /* a hard ceiling so one noise cannot grow  */
 
   function releaseLive() {
+    /* the glyph lets go FIRST: it must not be left reading an analyser whose
+       stream has stopped, which renders as the piece freezing mid-syllable */
+    if (window.GLYPH && window.GLYPH.detachAudio) { try { window.GLYPH.detachAudio(); } catch (e) {} }
+    if (live.an) { try { live.an.disconnect(); } catch (e) {} live.an = null; }
     if (live.node) { try { live.node.disconnect(); live.node.onaudioprocess = null; } catch (e) {} live.node = null; }
     if (live.src) { try { live.src.disconnect(); } catch (e) {} live.src = null; }
     if (live.stream) { try { live.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} live.stream = null; }
     seg = []; hearing = false; quietMs = 0;
   }
 
+  var onDispatchCb = null;
   async function sendSegment(onUtterance) {
     var total = 0, i;
     for (i = 0; i < seg.length; i++) total += seg[i].length;
@@ -152,14 +163,23 @@ window.PTT = (function () {
     var secs = total / live.rate;
     if (secs * 1000 < MIN_MS) return;
     var wav = encodeWav(downsample(all, live.rate, 16000), 16000);
-    var r = await B.call('/v1/voice/listen', 'POST', { audio: toBase64(wav) });
+    /* the caller gets told an utterance is in flight, and told again when it
+       lands -- the gap used to be silent from the outside */
+    if (onDispatchCb) { try { onDispatchCb(true); } catch (e) {} }
+    var r;
+    try {
+      r = await B.call('/v1/voice/listen', 'POST', { audio: toBase64(wav) });
+    } finally {
+      if (onDispatchCb) { try { onDispatchCb(false); } catch (e) {} }
+    }
     if (!r || !r.ok) return;
     var text = (r.data && r.data.text) || '';
     if (text && onUtterance) onUtterance({ text: text, engine: r.data && r.data.engine, seconds: secs });
   }
 
-  async function startLive(onUtterance, onLevel) {
+  async function startLive(onUtterance, onLevel, onDispatch) {
     if (live.on && !live.muted) return true;
+    onDispatchCb = onDispatch || null;
     try {
       live.stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
@@ -168,6 +188,20 @@ window.PTT = (function () {
       if (live.ctx.state === 'suspended') await live.ctx.resume();
       live.rate = live.ctx.sampleRate;
       live.src = live.ctx.createMediaStreamSource(live.stream);
+      /* The glyph drives itself from this. Same stream, same capture -- an
+         AnalyserNode is a tap, not a second microphone, so the OS indicator
+         still shows one. The settings match the ones glyph.js's own arm() uses,
+         because its band peaks, onset threshold and pitch tracker were tuned
+         against exactly these. */
+      live.an = live.ctx.createAnalyser();
+      live.an.fftSize = 2048;
+      live.an.smoothingTimeConstant = 0.5;
+      live.an.minDecibels = -96;
+      live.an.maxDecibels = -12;
+      live.src.connect(live.an);
+      if (window.GLYPH && window.GLYPH.attachAudio) {
+        window.GLYPH.attachAudio(live.an, live.ctx.sampleRate);
+      }
       live.node = live.ctx.createScriptProcessor(4096, 1, 1);
       var bufMs = 4096 / live.rate * 1000;
       live.node.onaudioprocess = function (e) {

@@ -33,6 +33,12 @@ var BLEND = LIGHT ? 'source-over' : 'lighter';
 
 var GOLD=[239,122,30],  GOLDH=[247,206,62], BLUE=[142,27,42], BLUEH=[224,74,30],
     WHITE=[255,244,214], CYAN=[245,166,35], STEEL=[122,130,142];
+/* The palette above is warm end to end -- CYAN is orange, BLUE is a deep red --
+   and the two cool tones already carry meanings: STEEL is "Ade is offline" and
+   ALERT is "a decision is waiting". Hearing you needed a tone of its own rather
+   than a borrowed one, so this is the only genuinely cool colour in the piece and
+   it means exactly one thing: your voice is arriving. */
+var LISTEN=[86,196,214], LISTENH=[176,240,248];
 var GROUND=['#c3c9d2','#b5bcc7','#a9b0bc'];
 
 function rgba(c,a){ a = a<0?0:(a>1?1:a); return 'rgba('+c[0]+','+c[1]+','+c[2]+','+a.toFixed(3)+')'; }
@@ -46,6 +52,7 @@ function sprite(c){
   g.fillStyle=rg; g.fillRect(0,0,s,s); return cv;
 }
 var SP_GOLD=sprite(GOLD), SP_BLUE=sprite(BLUE), SP_WHITE=sprite(WHITE), SP_CYAN=sprite(CYAN);
+var SP_LISTEN=null;   /* built lazily: LISTEN is declared below the palette */
 
 function dot(sp,x,y,r,a){ if(a<=0.004||r<=0.06) return; ctx.globalAlpha=a; ctx.drawImage(sp,x-r,y-r,r*2,r*2); }
 
@@ -54,7 +61,8 @@ function dot(sp,x,y,r,a){ if(a<=0.004||r<=0.06) return; ctx.globalAlpha=a; ctx.d
    and grey, working it burns, and a decision waiting on a human turns it amber
    and starts throwing arcs until somebody answers. */
 var ALERT=[178,18,43];        /* crimson: the one signal that must not blend in */
-var ADE = { online:false, busy:false, pending:0, brain:'', res:0.10, alert:0, spark:0, backing:true, speaking:0, speak:0 };
+var ADE = { online:false, busy:false, pending:0, brain:'', res:0.10, alert:0, spark:0, backing:true,
+            speaking:0, speak:0, hearing:0, hear:0, micLit:0 };
 ADE.apply = function(st){
   this.online = !!st.online; this.busy = !!st.busy;
   this.pending = st.pending|0; this.brain = st.brain||'';
@@ -67,6 +75,17 @@ ADE.step = function(dt){
   var sp = this.speak;
   this.speaking += (sp - this.speaking) * (1 - Math.exp(-dt/(sp > this.speaking ? 0.035 : 0.13)));
   this.alert += ((this.pending>0 ? 1 : 0) - this.alert) * (1 - Math.exp(-dt/0.35));
+  /* YOUR voice, on a channel of its own. One channel carrying both is what made
+     being heard indistinguishable from being talked at: the microphone level and
+     Ade's own speech waveform were both arriving through setSpeaking(). Same
+     envelope shape as the mouth above -- fast attack so a word registers the
+     moment it starts -- with a slightly longer release, because the eye reads a
+     listener as steady and a talker as percussive. */
+  var hr = this.hear;
+  this.hearing += (hr - this.hearing) * (1 - Math.exp(-dt/(hr > this.hearing ? 0.030 : 0.16)));
+  /* and whether the track is open at all, faded rather than switched so it
+     never blinks on an incidental mute */
+  this.micLit += ((MIC_OPEN ? 1 : 0) - this.micLit) * (1 - Math.exp(-dt/0.10));
 };
 
 /* -------------------------------------------------- arming, without chrome */
@@ -133,6 +152,33 @@ AUDIO.arm = function(){
                                 : 'Microphone unavailable: ' + ((e && e.message) || name || 'unknown'));
     micState('error','Retry', msg);
   });
+};
+
+/* The avatar does NOT arm its own microphone. ptt.js already holds one open for
+   recognition, and a second getUserMedia would be a second capture of the same
+   device -- two entries in the OS microphone indicator for one act of speaking.
+   So the avatar hands in an AnalyserNode on the stream it already owns, and
+   sample() below runs unchanged: the loudness envelope, the five band peaks,
+   the flux onset detector and the pitch tracker are the piece's own and are not
+   worth reinventing on the other side of the bridge.
+
+   detach() is NOT disarm(): disarm stops the tracks, and those tracks belong to
+   ptt.js. Muting the microphone is ptt.js's job and it does it by stopping the
+   track; this only lets go of the analyser. */
+AUDIO.attach = function(an, sr){
+  this.an = an; this.sr = sr || this.sr;
+  this.td   = new Float32Array(an.fftSize);
+  this.fd   = new Uint8Array(an.frequencyBinCount);
+  this.prev = new Uint8Array(an.frequencyBinCount);
+  this.dec  = new Float32Array(an.fftSize>>2);
+  this.nsdf = new Float32Array((an.fftSize>>2)+2);
+  this.on = true;
+};
+
+AUDIO.detach = function(){
+  this.on = false; this.an = null;
+  this.level=0; this.env=0; this.res=0; this.flash=0; this.onset=0; this.voiced=0; this.pitch=0;
+  for(var b=0;b<5;b++){ this.bands[b]=0; this.bpeak[b]=0.05; }
 };
 
 AUDIO.disarm = function(){
@@ -666,6 +712,21 @@ function drawStructure(t, u, res, asm){
     var flowPulse = 0.5+0.5*Math.sin(TAU*(u*18) - (ed.a+ed.b)*0.55);
     var a = ed.w * asm * (0.30 + 0.60*res) * dep * (0.72 + 0.5*flowPulse*res);
     var col = mix(ed.c, LIGHT ? BLUEH : GOLDH, res*0.35);
+    /* The structure ITSELF carries the microphone -- one mechanism at three
+       strengths, because the sixty edges are the figure's visible mass and
+       anything smaller cannot be seen. Per-node marks were tried first and
+       measured at 3 cool pixels for the whole frame: the nodes project to about
+       1.6px here, so a mark on one is not a cue, whatever its colour.
+
+         open mic   a calm 22% cool -- present, not shouting
+         your voice a strong shift, so being heard is unmistakable, and so it
+                    stays distinguishable from Ade talking back (both raise the
+                    resonance; brightness alone reads the same either way)
+         wake word  a flash through every edge at once */
+    if(AVATAR){
+      var lisE = clamp(0.22*ADE.micLit + 0.70*ADE.hearing + 0.85*wakeKick(), 0, 1);
+      if(lisE > 0.01) col = mix(col, LISTEN, lisE);
+    }
     ctx.beginPath(); ctx.moveTo(A.x,A.y); ctx.lineTo(B.x,B.y);
     ctx.lineWidth=(2.0+6.8*ed.w*res)*dep*S; ctx.strokeStyle=rgba(col, a*0.16); ctx.stroke();
     ctx.lineWidth=Math.max(1.7,(1.40+2.70*ed.w)*dep*S); ctx.strokeStyle=rgba(col, a); ctx.stroke();
@@ -710,11 +771,38 @@ function drawNodes(t, u, res, asm){
     var beat = 0.5+0.5*Math.sin(TAU*(u*22) - (outer?n.k*0.9:n.k*0.5+2.0));
     var col = outer ? GOLD : mix(BLUE,GOLDH,0.25);
     var hot = mix(col, LIGHT ? BLUEH : WHITE, 0.55*res);
+    /* the open microphone lives HERE, on the thirteen nodes, rather than in a
+       ring drawn around the piece: a listening machine that looks identical to a
+       deaf one is the thing people are right to dislike, and the glyph itself is
+       what they are looking at. */
+    var wk = AVATAR ? wakeKick() : 0;
+    var lis = AVATAR ? clamp(0.85*ADE.micLit + 0.85*ADE.hearing + 1.0*wk, 0, 1) : 0;
+    if(lis > 0.004){
+      hot = mix(hot, LISTENH, clamp(lis*0.95, 0, 1));
+      col = mix(col, LISTEN,  clamp(lis*0.75, 0, 1));
+    }
     var base = (outer?7.0:5.0)*S*(sp.s/PX)*(0.62+0.38*res)*(0.55+0.45*beat);
-    var a = asm*(0.30+0.70*res)*(0.35+0.65*sp.d);
+    var a = asm*(0.30+0.70*res)*(0.35+0.65*sp.d)*(1 + 0.85*wk);
     dot(SP_BLUE, sp.x, sp.y, base*5.4, a*0.16*(outer?0.7:1));
+    /* and the microphone reads on the nodes themselves. A hue shift on the
+       facet hairline was too little to see -- measured at 0.06x the frame's own
+       variance -- so each node carries its own cool glow while the track is
+       open. Thirteen marks on the figure, not one ring around it. */
     dot(outer?SP_GOLD:SP_BLUE, sp.x, sp.y, base*2.7, a*0.42*(1+gl));
     dot(SP_WHITE, sp.x, sp.y, base*0.95, a*(0.62+0.38*gl));
+    /* AFTER the gold and the white core, not before: drawn first, the node's own
+       marks paint straight over the middle of it and only the faint outer edge
+       survives -- measured at 12 cool pixels for the whole figure, which is not a
+       cue, it is a rounding error. */
+    /* The node's visible mass is these fixed-colour sprites, not `col` and `hot`
+       -- those only reach a hairline facet, which is why tinting them measured
+       nothing at all. So the microphone is drawn as its own mark, at the same
+       size and weight as the gold one it sits on, and the node itself turns. */
+    if(lis > 0.004){
+      if(!SP_LISTEN) SP_LISTEN = sprite(LISTEN);
+      dot(SP_LISTEN, sp.x, sp.y, base*5.4*(1+0.35*wk), a*0.34*lis);
+      dot(SP_LISTEN, sp.x, sp.y, base*2.7*(1+0.45*wk), a*0.62*lis*(1+gl));
+    }
 
     /* crystalline facet — a small faceted shell that catches the core light */
     var rr5=base*1.55, rot=u*TAU*(outer?1:-1.5)+n.k;
@@ -891,10 +979,17 @@ function drawCore(t, u, res, asm){
   var MID = warmth>0 ? mix(GOLD,  CYAN,  warmth) : GOLD;
   if(AVATAR){
     if(!ADE.online){ HOT = mix(HOT, STEEL, 0.78); MID = mix(MID, STEEL, 0.78); }
+    /* the core itself cools while your voice is arriving -- a ring at the edge is
+       an ornament, but the core is the thing the eye is already on. Applied
+       BEFORE alert on purpose: an approval waiting on a human outranks being
+       heard, and must not be tinted away by someone talking over it. */
+    if(ADE.hearing > 0.01){
+      HOT = mix(HOT, LISTENH, ADE.hearing*0.42); MID = mix(MID, LISTEN, ADE.hearing*0.52);
+    }
     if(ADE.alert > 0.01){ HOT = mix(HOT, ALERT, ADE.alert*0.85); MID = mix(MID, ALERT, ADE.alert*0.85); }
   }
   var breathe = 1 + 0.20*pulse*(0.35+0.85*res);
-  var base = 14.5*S*(focal/900)*(0.55+0.75*res)*breathe*(0.25+0.75*asm)*(1+0.34*AUDIO.flash);
+  var base = 14.5*S*(focal/900)*(0.55+0.75*res)*breathe*(0.25+0.75*asm)*(1+0.34*AUDIO.flash+0.30*wakeKick());
 
   /* concentric energy waves: three orthogonal fronts read as a sphere */
   if(res>0.45){
@@ -942,6 +1037,28 @@ function drawCore(t, u, res, asm){
   }
   ctx.globalAlpha=1;
   return c;
+}
+
+/* ------------------------------------------------------ the listening mark */
+/* An open microphone that looks exactly like a closed one is the thing the
+   comment on MIC_OPEN already called out, and it stayed that way because
+   setMic() was wired to nothing. This is what reads it.
+
+   Everything here draws in LISTEN and everything here draws INWARD: sound is
+   arriving. Ade's own voice is the warm core radiating outward. That opposition
+   -- cool/inward against warm/outward -- is what makes "it can hear me" legible
+   at a glance instead of inferred from timing. */
+var wakeAt = -99;
+/* "Ade" was heard. This runs through the STRUCTURE -- the same arc path a
+   consonant takes when the piece is listening to music -- rather than drawing a
+   ring around it. wakeKick() is read by the core and by the nodes. */
+function wake(){
+  wakeAt = NOWS;
+  for(var wi=0; wi<3; wi++) spawnOnset(NOWS);
+}
+function wakeKick(){
+  var k = 1 - (NOWS - wakeAt)/0.45;
+  return k > 0 ? k*k : 0;
 }
 
 /* ------------------------------------------------------------ lens bloom */
@@ -1034,7 +1151,12 @@ function frame(now){
   u = flow(t); res = resonance(t); asm = assembly(t);
   if(AVATAR){
     ADE.step(dt);
-    res = Math.max(res*0.35, ADE.res, ADE.speaking*0.92);   /* state leads; the voice overrides both */
+    /* state leads; either voice overrides it. Yours lifts the orb less far than
+       Ade's own does -- so the two stay distinguishable by ENERGY as well as by
+       colour -- but it does lift it. It used to lift it not at all: Ade talking
+       made the orb blaze while you talking left it sitting at idle, which is
+       most of what "it doesn't react to me" was. */
+    res = Math.max(res*0.35, ADE.res, ADE.speaking*0.92, ADE.hearing*0.72);
     if(ADE.alert > 0.55){
       ADE.spark -= dt;
       if(ADE.spark <= 0){ spawnOnset(NOWS); ADE.spark = 0.22 + 0.25*(1-ADE.alert); }
@@ -1089,6 +1211,21 @@ window.GLYPH = {
   setAde: function(st){ ADE.apply(st||{}); },
   setBacking: function(on){ ADE.backing = !!on; },
   setSpeaking: function(v){ ADE.speak = clamp(+v || 0, 0, 1); },
+  /* Ade's mouth is setSpeaking; YOUR voice is this. Two callers, two channels --
+     they were one, and that is why the orb looked the same either way. */
+  setHearing: function(v){ ADE.hear = clamp(+v || 0, 0, 1); },
+  wake: wake,
+  /* the live microphone's own analyser, so the piece's existing audio path
+     drives the geometry: five bands -> five shells, loudness -> resonance,
+     consonants -> arcs, pitch -> the core's colour */
+  attachAudio: function(an, sr){ if(an) AUDIO.attach(an, sr); },
+  detachAudio: function(){ AUDIO.detach(); },
+  isHearingAudio: function(){ return !!(AUDIO.on && AUDIO.an); },
+  /* the smoothed values the drawing actually reads, so a guard can tell a cue
+     that is not drawn from an input that never arrived -- they look identical
+     from the far side of a screenshot */
+  _state: function(){ return { mic: MIC_OPEN, micLit: ADE.micLit,
+    hearing: ADE.hearing, speaking: ADE.speaking, audio: !!(AUDIO.on && AUDIO.an) }; },
   arm: function(){ tryArm(); },
   isArmed: function(){ return AUDIO.on; }
 };

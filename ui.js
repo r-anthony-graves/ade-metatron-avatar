@@ -531,6 +531,11 @@
     if (!u || !u.text) return;
     var command = stripWake(u.text);
     if (command === null) return;                  /* not for us: discard */
+    /* It was for us. Flare NOW rather than when the answer comes back: this is
+       the only acknowledgement that can land while the sentence is still being
+       recognised, and "did it even hear me" is the question the whole live
+       microphone exists to answer. */
+    if (window.GLYPH && window.GLYPH.wake) window.GLYPH.wake();
     if (!command) { toggleBar(true); say('Listening.'); return; }
     handleSpoken(command, u.engine);
   }
@@ -538,7 +543,7 @@
 
   async function pttDown() {
     if (!B || PTT.isActive()) return;
-    var ok = await PTT.start(function (lvl) { if (window.GLYPH) window.GLYPH.setSpeaking(lvl * 0.7); });
+    var ok = await PTT.start(function (lvl) { if (window.GLYPH) window.GLYPH.setHearing(lvl); });
     if (!ok) { toggleBar(true); say('Microphone unavailable.', true); return; }
     toggleBar(true);
     out.classList.add('show'); out.classList.remove('err');
@@ -546,7 +551,7 @@
   }
   async function pttUp() {
     if (!B || !PTT.isActive()) return;
-    if (window.GLYPH) window.GLYPH.setSpeaking(0);
+    if (window.GLYPH) window.GLYPH.setHearing(0);
     out.innerHTML = '<span class="spin">…recognising</span>';
     var r = await PTT.stop();
     if (!r.ok) { say('Did not catch that (' + r.error + ').', true); return; }
@@ -638,14 +643,32 @@
     window.__setMicUi = setMicUi;
 
     async function micOn() {
+      /* Your voice goes to setHearing, not setSpeaking, and it goes at full
+         level. It used to arrive on Ade's own mouth channel at 0.55, which is
+         both why being heard looked like being talked at and why it barely
+         moved. */
       var ok = await window.PTT.live(onUtterance, function (lvl) {
-        if (window.GLYPH) window.GLYPH.setSpeaking(lvl * 0.55);
+        if (window.GLYPH) window.GLYPH.setHearing(lvl);
+      }, function (inFlight) {
+        /* ONLY while the bar is already open. The microphone is open all the
+           time and every utterance in the room goes to the recogniser before
+           the wake gate can judge it, so an unconditional indicator would
+           flash at every passing conversation -- and at ~150ms per
+           recognition it would be a flicker, not information. Open, you are
+           interacting, and the gap is worth naming. */
+        if (!bar.classList.contains('open')) return;
+        if (inFlight) {
+          out.classList.add('show'); out.classList.remove('err');
+          out.innerHTML = '<span class="spin">…recognising</span>';
+        } else if (/…recognising/.test(out.innerHTML)) {
+          out.innerHTML = '';
+        }
       });
       if (!ok) say('Could not open the microphone.', true);
       setMicUi();
       return ok;
     }
-    function micOff() { window.PTT.mute(); if (window.GLYPH) window.GLYPH.setSpeaking(0); setMicUi(); }
+    function micOff() { window.PTT.mute(); if (window.GLYPH) window.GLYPH.setHearing(0); setMicUi(); }
     async function micToggle() { if (window.PTT.isLive()) micOff(); else await micOn(); }
     window.__micToggle = micToggle;
     if (micBtn) micBtn.addEventListener('click', function () { void micToggle(); });

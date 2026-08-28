@@ -695,6 +695,286 @@ function startSmokeRun() {
             && mic.isLiveAfter === false;
     } catch (e) { mic = { error: String((e && e.message) || e) }; }
 
+    /* Ray, 2026-08-28: "it doesn't show it's hearing me". The orb had ONE
+       channel -- setSpeaking() -- fed both by Ade's own voice and by the live
+       microphone, so being heard and being talked at looked identical. And
+       setMic() stored MIC_OPEN, which nothing ever read, so an open
+       microphone looked exactly like a deaf one -- the thing the comment
+       above that variable already said people are right to dislike.
+
+       Measured off the rendered canvas, not restated from the code. The glyph
+       animates continuously, so a single before/after pair would differ no
+       matter what -- exactly the guard that keeps passing once the fix is
+       deleted. These ALTERNATE the two settings and compare the gap between
+       the arms against the spread WITHIN each arm, so the storyboard's own
+       drift lands on both arms and only a real, visible difference clears. */
+    let hearing = {};
+    try {
+      const js = (s2) => win.webContents.executeJavaScript(s2);
+      const settle = (ms) => new Promise((r) => setTimeout(r, ms || 110));
+      /* Cool light, summed and weighted by alpha. A plain lit-pixel count reads
+         the same to the pixel either way -- the backing halo covers a fixed area
+         and saturates it -- and a mean over lit pixels dilutes a local mark into
+         nothing. This measures how much blue-over-red light is on the canvas;
+         the halo contributes a constant that cancels between the paired arms,
+         so what is left is the mark itself. */
+      /* Cool light -- blue over red, weighted by alpha -- summed over three nested
+         regions. A lit-pixel count reads the same to the pixel either way (the
+         backing halo covers a fixed area and saturates it), and a mean over lit
+         pixels dilutes a local mark to nothing. The halo's own faint coolness is a
+         constant that cancels between the paired arms.
+
+         Three regions because the signal is central and the variance is not: the
+         starfield, particles and arcs churn across the whole frame, so a
+         whole-canvas sum measures mostly them. `core` is where these cues draw. */
+      const sample = () => js(
+        '(function(){var c=document.getElementById("glyph"), w=c.width, h=c.height;' +
+        ' var d=c.getContext("2d").getImageData(0,0,w,h).data;' +
+        ' var cool=0, lum=0, ringCool=0, ringLum=0, n=0, coolPx=0;' +
+        ' var cx=w/2, cy=h/2, m=Math.min(w,h), r0=m*0.15, r1=m*0.45;' +
+        ' for(var y=0;y<h;y++){ for(var x=0;x<w;x++){ var i=(y*w+x)*4, A=d[i+3];' +
+        '   if(A<=10) continue; n++;' +
+        '   var a=A/255, v=(d[i+2]-d[i])*a, L=(d[i]+d[i+1]+d[i+2])*a;' +
+        '   cool+=v; lum+=L;' +
+        '   if(d[i+2]-d[i] > 25) coolPx++;' +
+        '   var dx=x-cx, dy=y-cy, rr=Math.sqrt(dx*dx+dy*dy);' +
+        '   if(rr>=r0&&rr<r1){ ringCool+=v; ringLum+=L; } } }' +
+        ' return JSON.stringify({lit:n, cool:cool/1000, lum:lum/1000, coolPx:coolPx,' +
+        '   hue: lum? cool/lum*1000 : 0, ringHue: ringLum? ringCool/ringLum*1000 : 0});})()'
+      ).then(JSON.parse);
+      const mean = (xs) => xs.reduce((t, x) => t + x, 0) / xs.length;
+      const spread = (xs) => Math.max.apply(null, xs) - Math.min.apply(null, xs);
+      /* Paired DIFFERENCES, not two pooled arms. The glyph runs a 24s storyboard,
+         so samples drift steadily over the second or so a run takes -- pooling the
+         arms measures that drift as if it were noise and buries the signal. Taking
+         A and B back to back and differencing each pair cancels the drift where it
+         happens; what is left in the spread of those differences is real jitter. */
+      const KEYS = ['cool', 'lum', 'hue', 'coolPx'];
+
+      /* WAIT FOR THE FIGURE. assembly() fades the whole glyph to nothing for
+         about 4.6s of every 24s cycle, and every cue is multiplied by asm, so a
+         probe that starts in the fade measures zero and reports it as "the cue
+         does not work". This is why the same suite gave 116x and 1.16x on
+         consecutive runs for the same code -- the results were tracking the
+         storyboard's phase, not the code. Sample the cycle, learn how bright the
+         figure gets, then start only when it is actually on screen. */
+      async function awaitFigure() {
+        let max = 0;
+        for (let i = 0; i < 26; i++) {           /* ~6s: enough to see the peak */
+          const v = (await sample()).lum;
+          if (v > max) max = v;
+          await settle(230);
+        }
+        for (let i = 0; i < 90; i++) {           /* then wait for it to come back */
+          const v = (await sample()).lum;
+          if (v >= 0.80 * max) return { peak: +max.toFixed(1), at: +v.toFixed(1), waited: i };
+          await settle(230);
+        }
+        return { peak: +max.toFixed(1), at: -1, waited: -1 };
+      }
+      hearing.figure = await awaitFigure();
+      async function paired(setA, setB, key, ms, reps) {
+        const rows = [];
+        for (let i = 0; i < (reps || 3); i++) {
+          await js(setA); await settle(ms || 260); const a = await sample();
+          await js(setB); await settle(ms || 260); const b = await sample();
+          rows.push([a, b]);
+        }
+        const per = {};
+        KEYS.forEach((k) => {
+          const D = rows.map(([a, b]) => a[k] - b[k]);
+          /* with several reps the mean is known better than any single pair is,
+             so the bar is the standard error rather than the raw spread */
+          const noise = Math.max(spread(D) / Math.sqrt(D.length), 1e-6);
+          const signal = Math.abs(mean(D));
+          per[k] = { diff: +mean(D).toFixed(2), noise: +noise.toFixed(2),
+                     ratio: +(signal / noise).toFixed(2), clears: signal > 3 * noise };
+        });
+        const chosen = per[key];
+        return { a: +mean(rows.map((r) => r[0][key])).toFixed(2),
+                 b: +mean(rows.map((r) => r[1][key])).toFixed(2),
+                 diff: chosen.diff, noise: chosen.noise, signal: +Math.abs(chosen.diff).toFixed(2),
+                 clears: chosen.clears, byRegion: per };
+      }
+
+      /* the two channels exist at all -- so losing one fails as a named missing
+         function rather than as an opaque throw from the first probe */
+      hearing.api = JSON.parse(await js(
+        'JSON.stringify({ hear: typeof window.GLYPH.setHearing,' +
+        ' speak: typeof window.GLYPH.setSpeaking, wake: typeof window.GLYPH.wake,' +
+        ' mic: typeof window.GLYPH.setMic })'));
+      hearing.apiOk = hearing.api.hear === 'function' && hearing.api.speak === 'function'
+                   && hearing.api.wake === 'function' && hearing.api.mic === 'function';
+      /* does the input even arrive? A cue that is not drawn and an input that
+         never rose look the same in a screenshot. */
+      await js('(window.GLYPH.setHearing(0),window.GLYPH.setSpeaking(0)),0');
+      await js('window.GLYPH.setMic(1),0'); await settle(400);
+      hearing.stateOn = JSON.parse(await js('JSON.stringify(window.GLYPH._state())'));
+      await js('window.GLYPH.setMic(0),0'); await settle(400);
+      hearing.stateOff = JSON.parse(await js('JSON.stringify(window.GLYPH._state())'));
+
+      /* 1. An open microphone does not look like a deaf one.
+         340ms because micLit fades in 0.10s -- alternating faster than the fade
+         never lets either arm arrive and measures the middle against itself.
+         Ten reps and the STANDARD ERROR of the mean rather than the raw spread:
+         the resting cue is a 22% tint and is meant to be quiet, because the mic
+         is open by default and the glyph is gold -- an always-on cue loud enough
+         to clear 3x against a single pair would repaint the piece. A small real
+         effect is measured by sampling it more often, not by turning it up until
+         the threshold is met, which would be tuning the product to the test. */
+      /* NOT in hearing.ok, and deliberately so. Measured at ~52 units of cool
+         against ~260 of storyboard drift; clearing 3x on the standard error would
+         need something like 230 reps, and the alternative -- turning the cue up
+         until it clears -- would leave a gold piece permanently teal, since the
+         microphone is open by default. So the number is reported and watched, and
+         the claim it supports is only that the direction is right. If the resting
+         indicator ever needs to be provable, it has to become a visible design
+         element first; a guard must not be the reason a design gets louder. */
+      await awaitFigure();
+      hearing.micCue = await paired('window.GLYPH.setMic(1),0', 'window.GLYPH.setMic(0),0', 'cool', 340, 10);
+      await js('window.GLYPH.setMic(1),0');
+      /* 2. your voice moves it while you are speaking */
+      hearing.hearCue = await paired('window.GLYPH.setHearing(0.95),0', 'window.GLYPH.setHearing(0),0', 'lum', 300);
+      /* 3. and it is NOT the same look as Ade talking back. Both arms are measured
+            against IDLE rather than against each other: comparing the two voices
+            head to head passes even with the hearing channel deleted, because
+            Ade's voice alone moves the frame and the comparison cannot tell
+            "yours is cool" from "his is warm". Against idle, each channel has to
+            show its own effect, and they have to point opposite ways. */
+      hearing.yoursAddsCool = await paired(
+        '(window.GLYPH.setSpeaking(0),window.GLYPH.setHearing(0.95)),0',
+        '(window.GLYPH.setSpeaking(0),window.GLYPH.setHearing(0)),0', 'coolPx', 300);
+      hearing.adesNoCool = await paired(
+        '(window.GLYPH.setHearing(0),window.GLYPH.setSpeaking(0.95)),0',
+        '(window.GLYPH.setHearing(0),window.GLYPH.setSpeaking(0)),0', 'coolPx', 300);
+      /* Ade's voice must put no cool light on the figure while yours does. Stated
+         as a ratio rather than a sign: counting cool pixels, "his is warm" is not
+         a negative count, it is the absence of one, and demanding diff <= 0 just
+         fails on noise around zero. */
+      hearing.channelsOppose = hearing.yoursAddsCool.diff > 10 * Math.abs(hearing.adesNoCool.diff);
+      await js('(window.GLYPH.setSpeaking(0),window.GLYPH.setHearing(0)),0');
+
+      /* Ray, 2026-08-28: "i want the glyph itself to respond to speech, not a ring
+         around it". The piece already had an audio path -- five bands onto the
+         five shells in stageGlow(), loudness into res, flux onsets into arcs --
+         armed only when it runs as artwork. The avatar now feeds it the analyser
+         from the microphone ptt.js already holds.
+
+         Driven here with a real Web Audio graph rather than by poking values in:
+         an oscillator through an AnalyserNode, exactly what a voice arrives as.
+         If the wiring is broken this measures nothing, which is the point. */
+      hearing.audioDrives = {};
+      try {
+        await js(
+          '(function(){ var AC = window.AudioContext||window.webkitAudioContext;' +
+          ' var ac = new AC(); var osc = ac.createOscillator(); osc.type = "sawtooth";' +
+          ' osc.frequency.value = 190; var g = ac.createGain(); g.gain.value = 0;' +
+          ' var an = ac.createAnalyser(); an.fftSize = 2048; an.smoothingTimeConstant = 0.5;' +
+          ' an.minDecibels = -96; an.maxDecibels = -12;' +
+          ' var mute = ac.createGain(); mute.gain.value = 0;' +
+          ' osc.connect(g); g.connect(an); an.connect(mute); mute.connect(ac.destination);' +
+          ' osc.start(); if(ac.resume) ac.resume();' +
+          ' window.__smokeVoice = { on:function(){ g.gain.value = 0.7;' +
+          '   window.GLYPH.attachAudio(an, ac.sampleRate); },' +
+          '   off:function(){ g.gain.value = 0; window.GLYPH.detachAudio(); } };})(),0');
+        hearing.audioDrives = await paired(
+          'window.__smokeVoice.on(),0', 'window.__smokeVoice.off(),0', 'lum', 420);
+        hearing.audioAttaches = await js(
+          '(function(){ window.__smokeVoice.on();' +
+          ' var v = window.GLYPH.isHearingAudio(); window.__smokeVoice.off(); return v; })()');
+        hearing.audioDetaches = await js('window.GLYPH.isHearingAudio() === false');
+      } catch (e) { hearing.audioDrives = { error: String((e && e.message) || e) }; }
+
+      /* And the wake word fires through the geometry, not around it. NOT paired():
+         the flash decays over 450ms, so an A/B alternation samples arm B while
+         arm A is still fading and measures the difference between a flash and a
+         half-flash. Each rep waits the flash out, takes the baseline, then fires
+         and samples while it is bright. */
+      try {
+        /* Against a NULL CONTROL, not against its own spread. Reading the canvas
+           takes a variable slice of the 450ms the flash lives for, so the same
+           flash measures differently run to run; comparing that spread to itself
+           calls a working flash noise. The null arm is the identical measurement
+           with the wake() removed -- so it captures exactly that jitter, and the
+           only thing left between the arms is the flash. */
+        /* PEAK over the flash's life, not one sample inside it: reading the canvas
+           takes a variable slice of the 450ms it lives for, so a single timed
+           sample lands on the peak sometimes and on the tail other times. And in
+           `lum`, because the flare is brighter arcs and hotter nodes -- it is not
+           cooler, so measuring it in blue measured the wrong thing and duly came
+           back with the wrong sign. */
+        const pulse = async (fire) => {
+          await settle(520);                       /* let any previous flash die */
+          const before = (await sample()).lum;
+          if (fire) await js('window.GLYPH.wake(),0');
+          let peak = -1e9;
+          for (let k = 0; k < 3; k++) { const v = (await sample()).lum; if (v > peak) peak = v; }
+          return peak - before;
+        };
+        const D1 = [], D0 = [];
+        await awaitFigure();
+        for (let i = 0; i < 4; i++) { D1.push(await pulse(true)); D0.push(await pulse(false)); }
+        const noise = Math.max(spread(D0) / 2, Math.abs(mean(D0)), 1e-6);
+        const signal = Math.abs(mean(D1));
+        hearing.wakeRender = { diff: +mean(D1).toFixed(2), nullDiff: +mean(D0).toFixed(2),
+                               noise: +noise.toFixed(2), ratio: +(signal / noise).toFixed(2),
+                               brighter: mean(D1) > 0, clears: signal > 3 * noise };
+        await settle(560);
+      } catch (e) { hearing.wakeRender = { error: String((e && e.message) || e) }; }
+
+      /* what the three states actually look like, side by side on disk -- the
+         numbers above say a difference exists, not whether it reads as one */
+      const shots = { mic1: 'smoke-listening.png', hear: 'smoke-hearing.png', off: 'smoke-mic-off.png' };
+      const capture = async (name) => {
+        await settle(320);
+        const img = await win.webContents.capturePage();
+        fs.writeFileSync(path.join(__dirname, name), img.toPNG());
+      };
+      await js('(window.GLYPH.setMic(0),window.GLYPH.setHearing(0),window.GLYPH.setSpeaking(0)),0');
+      await capture(shots.off);
+      await js('(window.GLYPH.setMic(1),window.GLYPH.setHearing(0)),0');
+      await capture(shots.mic1);
+      await js('window.GLYPH.setHearing(0.85),0');
+      await capture(shots.hear);
+      await js('window.GLYPH.setHearing(0),0');
+      hearing.shots = shots;
+
+      /* 4. the wake word flares the moment it matches -- the one cue that says
+            "this one is for me" BEFORE recognition has finished. Driven
+            through the real onUtterance, with a phrase that is not a
+            VOICE_ACTION so nothing is dispatched by the check itself. */
+      const barBefore = await js('document.getElementById("bar").classList.contains("open")');
+      const inBefore = await js('document.getElementById("in").value');
+      await js('(function(){ window.__wakeCalls = 0; var w = window.GLYPH.wake;' +
+               ' window.GLYPH.wake = function(){ window.__wakeCalls++; return w.apply(this, arguments); }; })(),0');
+      await js('window.__onUtterance({text:"Ade, remember the milk"}),0');
+      await settle(80);
+      hearing.wakeCalls = await js('window.__wakeCalls');
+      await js('window.__wakeCalls = 0,0');
+      await js('window.__onUtterance({text:"the deploy finished, we should go home"}),0');
+      await settle(80);
+      hearing.nonWakeCalls = await js('window.__wakeCalls');
+      /* leave the bar exactly as found -- hit's probe below asserts on it */
+      await js('(function(){document.getElementById("in").value=' + JSON.stringify(inBefore) + ';' +
+               ' document.getElementById("bar").classList.toggle("open",' + (barBefore ? 'true' : 'false') + ');})(),0');
+
+      hearing.ok = hearing.apiOk === true
+                && hearing.figure.at > 0
+                && hearing.audioDrives.clears === true
+                && hearing.audioAttaches === true
+                && hearing.audioDetaches === true
+                && hearing.wakeRender.clears === true
+                && hearing.wakeRender.brighter === true
+                && hearing.yoursAddsCool.clears === true
+                /* direction too: clears() is |signal| > 3*noise and says nothing
+                   about sign, so without this a cue that went the WRONG way -- as
+                   it does with the tint deleted -- still counts as a pass */
+                && hearing.yoursAddsCool.diff > 0
+                && hearing.channelsOppose === true
+                && hearing.wakeCalls === 1
+                && hearing.nonWakeCalls === 0;
+    } catch (e) { hearing = { error: String((e && e.message) || e) }; }
+
     /* `/word` must reach a ROUTE, not a dead end. Ray, 2026-08-27, trying to
        use skills from the bar: "nothing happens, it says Nothing to send".
        classify() demanded `\s+([\s\S]+)` after the type, so a lone `/word`
@@ -786,6 +1066,7 @@ function startSmokeRun() {
       clickThrough: !!cfg.clickThrough,
       interact,
       mic,
+      hearing,
       hit,
       voice,
       keys,

@@ -104,6 +104,28 @@ response's `engine` field says which recogniser actually answered
 the command bar's reply is suffixed ` · windows` so a stopped sidecar reads
 as a fallback, never as a silently worse model.
 
+**If the sidecar is down, the live microphone goes SILENT, not degraded.**
+Measured 2026-08-28. The fallback claim above holds for the push-to-talk path
+and not for the always-live one, and the difference is the wake word: the
+Windows floor can only ever return one of nine fixed phrases, and **none of
+them contains "Ade"**. So `stripWake()` returns `null` for 9 of 9, every
+utterance is discarded before anything is dispatched, and the orb sits there
+looking like it is ignoring you. Check this before debugging anything else:
+
+```powershell
+py -3.12 C:\Users\ray_g\own-stt\ownstt.py status   # pid, health, model
+py -3.12 C:\Users\ray_g\own-stt\ownstt.py start    # if health is down
+```
+
+Nothing restarts it on boot today, so a reboot leaves the microphone inert
+with no visible sign of why. The `engine` field is the tell: anything other
+than `"whisper"` means open speech is not running.
+
+Recognition cost, same day, through `/v1/voice/listen`: **~150 ms** on the
+sidecar against a flat **~2,230 ms** on the Windows floor -- and the floor's
+cost is fixed per call, not proportional to what you said (0.74 s and 3.75 s
+of audio both cost ~2.2 s).
+
 Windows' own constrained-grammar recogniser is the **floor**: it only
 answers when the sidecar is down, and only the phrases below still resolve
 to a direct action. `GET /v1/voice/phrases` returns the current list. Say
