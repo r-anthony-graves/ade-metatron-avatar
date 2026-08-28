@@ -6,7 +6,7 @@
  * through Ade's permission gate and audit log.
  */
 'use strict';
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('adeBridge', {
   /* pathname must be /v1/* on 127.0.0.1:8300; main enforces it again */
@@ -15,6 +15,18 @@ contextBridge.exposeInMainWorld('adeBridge', {
   config: () => ipcRenderer.invoke('cfg:get'),
   speakEnabled: () => ipcRenderer.invoke('cfg:speak'),
   speak: (text) => ipcRenderer.invoke('ade:speak', text),
+
+  /* File and folder upload. The renderer never reads a file and never sends
+     one: the page's CSP is `default-src 'none'`, so it cannot reach the
+     network at all, and Electron 32 removed `File.path`, so it cannot even
+     learn what was dropped. `webUtils.getPathForFile` runs HERE, in the
+     preload, and main does the walking and the POSTing.
+     What crosses this boundary is a list of strings, one way. */
+  dropPaths: (files) => Array.from(files || []).map((f) => {
+    try { return webUtils.getPathForFile(f); } catch (e) { return ''; }
+  }).filter(Boolean),
+  pick: (wantFolder) => ipcRenderer.invoke('ade:pick', !!wantFolder),
+  upload: (paths, overwrite) => ipcRenderer.invoke('ade:upload', paths, !!overwrite),
 
   onState: (fn) => ipcRenderer.on('ade:state', (_e, s) => fn(s)),
   onToggleBar: (fn) => ipcRenderer.on('ui:toggleBar', () => fn()),

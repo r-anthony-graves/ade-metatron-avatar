@@ -196,21 +196,45 @@
   }
   window.__normalizeSpoken = normalizeSpoken;   /* --smoke reaches it here */
 
+  /* `/skill` is a VERB, not a task type. `/` still means "task type" for the
+     34 real ones; this reserves three words in front of them so a procedure
+     can be attached without a second syntax to remember. */
+  var SKILL_VERBS = { skill: 1, skills: 1, unskill: 1 };
+  var UPLOAD_VERBS = { upload: 1, uploads: 1 };
+
   function classify(raw) {
     var v = raw.trim();
     if (v.charAt(0) === '!') return { kind: 'shell', text: v.slice(1).trim() };
     if (v.charAt(0) === '?') return { kind: 'ask', text: v.slice(1).trim() };
     if (v.charAt(0) === '/') {
-      var m = v.slice(1).match(/^(\S+)\s+([\s\S]+)$/);
-      if (m) return { kind: 'task', type: m[1], text: m[2] };
-      return { kind: 'task', type: v.slice(1).trim(), text: '' };
+      /* `\s*([\s\S]*)` where this used to demand `\s+([\s\S]+)`. That "+" is
+         the whole bug: a lone `/word` fell through to the branch below, which
+         returned text:'' -- and send() answers an empty body with "Nothing to
+         send." So the exact input the hint invites ("/type task type") was the
+         input that dead-ended, with a message that reads like the bar never
+         saw the keystrokes. Ray, 2026-08-27: "nothing happens, it says Nothing
+         to send". */
+      var m = v.slice(1).match(/^(\S+)\s*([\s\S]*)$/);
+      var word = m ? m[1] : '';
+      var body = m ? m[2].trim() : '';
+      if (SKILL_VERBS[word.toLowerCase()]) {
+        return { kind: 'skill', verb: word.toLowerCase(), text: body };
+      }
+      if (UPLOAD_VERBS[word.toLowerCase()]) {
+        return { kind: 'upload', verb: word.toLowerCase(), text: body };
+      }
+      return { kind: 'task', type: word, text: body };
     }
     return { kind: 'task', type: 'coding', text: v };
   }
+  window.__classify = classify;   /* --smoke reaches it here */
   function paintMode() {
     var c = classify(input.value);
-    mode.className = c.kind;
-    mode.textContent = c.kind === 'shell' ? 'Shell' : c.kind === 'ask' ? 'Ask' : ('Task' + (c.type && c.type !== 'coding' ? ' · ' + c.type : ''));
+    mode.className = (c.kind === 'skill' || c.kind === 'upload') ? 'ask' : c.kind;
+    mode.textContent = c.kind === 'shell' ? 'Shell' : c.kind === 'ask' ? 'Ask'
+      : c.kind === 'skill' ? 'Skill'
+      : c.kind === 'upload' ? 'Upload'
+      : ('Task' + (c.type && c.type !== 'coding' ? ' · ' + c.type : ''));
     if (c.kind === 'shell') hint.textContent = 'Direct subprocess — NOT gated by Permission.check(). Enter to run.';
     else hint.innerHTML = HINT;
   }
@@ -231,11 +255,180 @@
     try { return JSON.stringify(d, null, 2); } catch (e) { return String(d); }
   }
 
+  /* --------------------------------------------- attached procedures */
+  /* Names only. They ride every task this bar dispatches and are merged into
+     the agent's SYSTEM PROMPT server-side (adeos/ocs/act.py). They never widen
+     the tool allowlist -- a procedure can say what to do and cannot grant the
+     means -- which is why a list chosen in a client is safe to accept. */
+  var attached = [];
+  var skillIndex = null;          /* GET /v1/skills, fetched once, on demand */
+
+  function paintSkills() {
+    var box = document.getElementById('skills');
+    if (!box) return;
+    box.innerHTML = '';
+    for (var i = 0; i < attached.length; i++) {
+      var chip = document.createElement('span');
+      chip.textContent = attached[i];       /* textContent: never parsed */
+      box.appendChild(chip);
+    }
+    box.classList.toggle('show', attached.length > 0);
+  }
+
+  async function loadSkillIndex() {
+    if (skillIndex) return skillIndex;
+    var r = await B.call('/v1/skills', 'GET');
+    if (!r || !r.ok) return null;
+    skillIndex = (r.data && r.data.skills) || [];
+    return skillIndex;
+  }
+
+  async function handleSkill(c) {
+    var rows = await loadSkillIndex();
+    if (!rows) { say('Could not read the skills index from Ade OS.', true); return; }
+
+    var wanted = c.text.replace(/^-/, '').trim();
+    var removing = c.verb === 'unskill' || /^-/.test(c.text);
+
+    if (!wanted) {
+      var on = attached.length ? 'Attached: ' + attached.join(', ') + '\n\n' : '';
+      var names = rows.filter(function (s) { return s.attachable; })
+                      .map(function (s) { return s.name; });
+      var tooBig = rows.filter(function (s) { return !s.attachable; })
+                       .map(function (s) { return s.name; });
+      /* The over-cap ones are NAMED rather than hidden. A skill that would be
+         dropped whole is invisible once attached -- the turn runs, the answer
+         looks normal, and the procedure was never there. */
+      say(on + '/skill <name> to attach, /unskill <name> to remove.\n\n'
+          + names.length + ' available:\n' + names.join(', ')
+          + (tooBig.length
+             ? '\n\nToo large to attach (over the ' + rows.length + '-skill cap): '
+               + tooBig.join(', ')
+             : ''));
+      return;
+    }
+
+    var row = null;
+    for (var i = 0; i < rows.length; i++) if (rows[i].name === wanted) row = rows[i];
+    if (!row) { say('No skill named "' + wanted + '". /skill lists them.', true); return; }
+
+    if (removing) {
+      attached = attached.filter(function (n) { return n !== wanted; });
+      paintSkills(); say('Detached ' + wanted + '.');
+    } else if (!row.attachable) {
+      /* Refuse before the fact rather than fail silently after it. */
+      say(wanted + ' is ' + row.chars + ' characters and will not fit the '
+          + 'system prompt, so it would be dropped whole rather than attached. '
+          + 'Not attaching it.', true);
+    } else if (attached.indexOf(wanted) >= 0) {
+      say(wanted + ' is already attached.');
+    } else {
+      attached.push(wanted); paintSkills();
+      say('Attached ' + wanted + '. It governs every task from this bar until '
+          + 'you /unskill it. (Not the ? ask route -- that has no tools.)');
+    }
+    input.value = ''; paintMode();
+  }
+
+  /* ------------------------------------------------------- file upload */
+  /* Two ways in, because one of them cannot always work: the window is
+     click-through wherever it is not painted (see applyHit in main.js), so an
+     OS drag lands on whatever is UNDERNEATH unless the bar is open. `/upload`
+     opens the native picker and never depends on hit-testing. */
+  function uploadReport(r) {
+    if (!r) return 'Upload failed: no reply from the main process.';
+    var lines = [];
+    lines.push(r.sent + ' of ' + r.found + ' file(s) uploaded'
+               + (r.bytes ? ' (' + Math.round(r.bytes / 1024) + ' KB)' : '')
+               + ' into uploads/.');
+    /* Named, never silent. A drop that quietly sent half a folder reads
+       exactly like one that sent all of it. */
+    if (r.skipped && r.skipped.length) {
+      lines.push('');
+      lines.push('Skipped ' + r.skipped.length + ':');
+      for (var i = 0; i < Math.min(8, r.skipped.length); i++) {
+        lines.push('  ' + r.skipped[i].path + ' — ' + r.skipped[i].why);
+      }
+      if (r.skipped.length > 8) lines.push('  … and ' + (r.skipped.length - 8) + ' more');
+    }
+    if (r.failed && r.failed.length) {
+      lines.push('');
+      lines.push('Failed ' + r.failed.length + ':');
+      for (var j = 0; j < Math.min(8, r.failed.length); j++) {
+        lines.push('  ' + r.failed[j].path + ' — ' + r.failed[j].why);
+      }
+    }
+    if (r.sent) {
+      lines.push('');
+      lines.push('Ade can read these — ask it about uploads/<name>.');
+    }
+    return lines.join('\n');
+  }
+
+  async function doUpload(paths, overwrite) {
+    if (!paths || !paths.length) { say('Nothing selected.', true); return; }
+    busy = true;
+    out.classList.add('show'); out.classList.remove('err');
+    out.innerHTML = '<span class="spin">…uploading</span>';
+    var r = await B.upload(paths, !!overwrite);
+    busy = false;
+    say(uploadReport(r), !!(r && r.failed && r.failed.length && !r.sent));
+  }
+
+  async function handleUpload(c) {
+    var wantFolder = /^folder|^dir/i.test(c.text || '');
+    var paths = await B.pick(wantFolder);
+    input.value = ''; paintMode();
+    await doUpload(paths, /overwrite/i.test(c.text || ''));
+  }
+
+  /* Drag and drop, live only while the bar is open -- which is also the only
+     time the window is not handing the mouse to whatever is behind it. */
+  window.addEventListener('dragover', function (e) {
+    if (!bar.classList.contains('open')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    bar.classList.add('dropping');
+  });
+  window.addEventListener('dragleave', function () { bar.classList.remove('dropping'); });
+  window.addEventListener('drop', function (e) {
+    if (!bar.classList.contains('open')) return;
+    e.preventDefault();
+    bar.classList.remove('dropping');
+    if (busy || !B) return;
+    var paths = B.dropPaths(e.dataTransfer && e.dataTransfer.files);
+    if (!paths.length) {
+      say('Nothing droppable there. Use /upload to pick files, or '
+          + '/upload folder for a directory.', true);
+      return;
+    }
+    void doUpload(paths, false);
+  });
+
+  /* What an empty body should say. Anything but "Nothing to send.", which
+     reads as though the bar never saw the keystrokes -- and is only ever
+     reached WITH keystrokes, since send() returns silently on a blank input. */
+  async function emptyHelp(c) {
+    if (c.kind === 'shell') return 'Type a command after ! — e.g. !git status';
+    if (c.kind === 'ask') return 'Type a question after ? — e.g. ?what brain are you on';
+    var r = await B.call('/v1/task-types', 'GET');
+    var types = (r && r.ok && r.data && r.data.types) || [];
+    var names = types.map(function (t) { return t.type; });
+    var known = names.indexOf(c.type) >= 0;
+    return (known
+        ? '/' + c.type + ' needs something to do — e.g. /' + c.type + ' run the tests.'
+        : '"' + c.type + '" is not a task type.')
+      + (names.length ? '\n\nTypes: ' + names.join(', ') : '')
+      + '\n\nOr /skill <name> to attach a procedure.';
+  }
+
   async function send() {
     var raw = input.value;
     if (!raw.trim() || busy || !B) return;
     var c = classify(raw);
-    if (!c.text) { say('Nothing to send.', true); return; }
+    if (c.kind === 'skill') { await handleSkill(c); return; }
+    if (c.kind === 'upload') { await handleUpload(c); return; }
+    if (!c.text) { say(await emptyHelp(c), true); return; }
 
     stopSpeaking();                 /* barge-in: a new ask cuts off the old answer */
     busy = true;
@@ -251,7 +444,11 @@
       });
     } else {
       res = await B.call('/v1/tasks', 'POST', {
-        description: c.text, task_type: c.type || 'coding', topic: 'u/local/avatar'
+        description: c.text, task_type: c.type || 'coding', topic: 'u/local/avatar',
+        /* Every dispatch, not just the one after /skill: an attached procedure
+           governs the conversation, and a mission that plans then verifies
+           would otherwise lose it between the two. */
+        skills: attached.slice()
       });
     }
 

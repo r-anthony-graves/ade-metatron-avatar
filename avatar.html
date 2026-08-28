@@ -74,6 +74,19 @@
 
   #hint { margin-top:6px; font-size:9.5px; letter-spacing:.06em; color:rgba(110,118,129,.85); }
 
+  /* A drop target has to look like one while a file is over it. */
+  #bar.dropping { outline:2px dashed rgba(88,166,255,.55); outline-offset:-4px; }
+
+  /* Attached procedures. Visible whenever any are on, because a skill that
+     silently governs the turn is indistinguishable from one that was dropped. */
+  #skills { display:none; margin-top:7px; }
+  #skills.show { display:block; }
+  #skills span {
+    display:inline-block; margin:0 4px 3px 0; padding:1px 6px; border-radius:9px;
+    font-size:9.5px; letter-spacing:.04em;
+    background:rgba(88,166,255,.12); color:#2f6ab8; border:1px solid rgba(88,166,255,.3);
+  }
+
   #approve { display:none; margin-top:7px; }
   #approve.show { display:block; }
   #approve .what {
@@ -114,7 +127,8 @@
       </div>
     </div>
     <div id="out"></div>
-    <div id="hint">Enter to send · <b>!</b> shell (ungated) · <b>?</b> ask · <b>/type</b> task type · <b id="talkKey">tray menu</b> to speak · Esc to hide</div>
+    <div id="skills"></div>
+    <div id="hint">Enter to send · <b>!</b> shell (ungated) · <b>?</b> ask · <b>/type</b> task type · <b>/skill</b> attach a procedure · <b>/upload</b> files, or drop them here · <b id="talkKey">tray menu</b> to speak · Esc to hide</div>
   </div>
 
   <script src="glyph.js"></script>

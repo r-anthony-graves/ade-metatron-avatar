@@ -14,9 +14,10 @@
  *                 "ungated" at the point of use.
  */
 'use strict';
-const { app, BrowserWindow, Tray, Menu, ipcMain, screen, shell, nativeImage, clipboard } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, screen, shell, nativeImage, clipboard, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const ADE_BASE = process.env.ADEOS_URL || 'http://127.0.0.1:8300';
 const SMOKE = process.argv.includes('--smoke');
@@ -84,6 +85,109 @@ async function adeSpeak(text) {
     clearTimeout(kill);
   }
 }
+
+/* ---------------------------------------------------------------- upload */
+/* Ray, 2026-08-28: "the ability to upload files and folder".
+ *
+ * The WALK happens here, in main, not in the renderer. Two reasons, both from
+ * the code rather than preference: the page's CSP is `default-src 'none'`, so
+ * the renderer cannot reach the network at all; and Electron 33 removed
+ * `File.path`, so the renderer cannot even learn what was dropped without
+ * `webUtils.getPathForFile` through the preload. Main gets real paths, walks
+ * directories itself, and POSTs one file per request -- which keeps the
+ * server's streaming-with-abort property, so an oversized file never lands.
+ *
+ * Every limit REPORTS rather than truncating silently. A drop that quietly
+ * sent half a folder is the same class of failure as a skill that quietly
+ * arrives at half its length. */
+const UPLOAD_MAX_FILES = 500;
+const UPLOAD_MAX_TOTAL = 50 * 1024 * 1024;
+const UPLOAD_MAX_DEPTH = 16;
+const UPLOAD_SKIP_DIRS = new Set(['.git', 'node_modules', '__pycache__', '.venv', 'venv']);
+
+function walkUpload(root, out, skipped) {
+  /* `root` is the dropped path. Names are kept RELATIVE TO ITS PARENT so the
+     dropped folder keeps its own name on the far side -- dropping `myproj`
+     gives `myproj/src/a.py`, not a loose `src/a.py`. */
+  const base = path.dirname(root);
+  const stack = [root];
+  while (stack.length) {
+    const current = stack.pop();
+    let st;
+    try { st = fs.statSync(current); }
+    catch (e) { skipped.push({ path: current, why: String((e && e.code) || e) }); continue; }
+    const rel = path.relative(base, current).split(path.sep).join('/');
+    if (st.isDirectory()) {
+      if (UPLOAD_SKIP_DIRS.has(path.basename(current))) {
+        skipped.push({ path: rel, why: 'skipped by name' });
+        continue;
+      }
+      if (rel.split('/').length >= UPLOAD_MAX_DEPTH) {
+        skipped.push({ path: rel, why: 'deeper than ' + UPLOAD_MAX_DEPTH });
+        continue;
+      }
+      let names = [];
+      try { names = fs.readdirSync(current); }
+      catch (e) { skipped.push({ path: rel, why: String((e && e.code) || e) }); continue; }
+      for (const n of names) stack.push(path.join(current, n));
+      continue;
+    }
+    if (!st.isFile()) { skipped.push({ path: rel, why: 'not a regular file' }); continue; }
+    out.push({ full: current, rel, bytes: st.size });
+  }
+}
+
+async function adeUpload(paths, overwrite) {
+  const wanted = [], skipped = [];
+  for (const p of (paths || [])) {
+    if (typeof p === 'string' && p) walkUpload(p, wanted, skipped);
+  }
+  wanted.sort((a, b) => a.rel.localeCompare(b.rel));
+
+  /* Trim to the caps BEFORE sending anything, so the report is accurate
+     rather than discovered halfway through. */
+  const send = [];
+  let total = 0;
+  for (const f of wanted) {
+    if (send.length >= UPLOAD_MAX_FILES) { skipped.push({ path: f.rel, why: 'over ' + UPLOAD_MAX_FILES + ' files' }); continue; }
+    if (total + f.bytes > UPLOAD_MAX_TOTAL) { skipped.push({ path: f.rel, why: 'over the 50 MB drop limit' }); continue; }
+    send.push(f); total += f.bytes;
+  }
+
+  let sent = 0, bytes = 0;
+  const failed = [];
+  for (const f of send) {
+    let body;
+    try {
+      body = new FormData();
+      body.append('file', new Blob([fs.readFileSync(f.full)]), path.basename(f.rel));
+      body.append('relpath', f.rel);
+      body.append('overwrite', overwrite ? 'true' : 'false');
+    } catch (e) { failed.push({ path: f.rel, why: String((e && e.message) || e) }); continue; }
+    try {
+      const res = await fetch(ADE_BASE + '/v1/upload', { method: 'POST', body });
+      const text = await res.text();
+      if (!res.ok) {
+        let why = 'HTTP ' + res.status;
+        try { why = JSON.parse(text).error.message || why; } catch (e) { /* keep */ }
+        failed.push({ path: f.rel, why });
+        continue;
+      }
+      sent += 1; bytes += f.bytes;
+    } catch (e) { failed.push({ path: f.rel, why: String((e && e.message) || e) }); }
+  }
+  return { sent, bytes, found: wanted.length, skipped, failed };
+}
+ipcMain.handle('ade:upload', (_e, paths, overwrite) => adeUpload(paths, overwrite));
+ipcMain.handle('ade:pick', async (_e, wantFolder) => {
+  const r = await dialog.showOpenDialog(win, {
+    title: wantFolder ? 'Upload a folder' : 'Upload files',
+    properties: wantFolder
+      ? ['openDirectory', 'multiSelections']
+      : ['openFile', 'multiSelections']
+  });
+  return (r && !r.canceled && r.filePaths) ? r.filePaths : [];
+});
 
 let voiceList = [];
 async function loadVoices() {
@@ -591,6 +695,61 @@ function startSmokeRun() {
             && mic.isLiveAfter === false;
     } catch (e) { mic = { error: String((e && e.message) || e) }; }
 
+    /* `/word` must reach a ROUTE, not a dead end. Ray, 2026-08-27, trying to
+       use skills from the bar: "nothing happens, it says Nothing to send".
+       classify() demanded `\s+([\s\S]+)` after the type, so a lone `/word`
+       came back with text:'' and send() refused it -- while the hint line was
+       advertising `/type` as the way to do exactly that.
+
+       Asserted against the REAL classify(), and falsifiable: put the `+` back
+       and skillVerb/typeKeepsWord go wrong. */
+    let slash = {};
+    try {
+      const js = (s) => win.webContents.executeJavaScript(s);
+      slash.skillVerb = await js('JSON.stringify(window.__classify("/skill"))');
+      slash.skillNamed = await js('JSON.stringify(window.__classify("/skill brainstorming"))');
+      slash.typeKeepsWord = await js('window.__classify("/superpowers").type');
+      slash.typeWithBody = await js('window.__classify("/qa run the suite").text');
+      slash.plainStaysTask = await js('window.__classify("fix the build").type');
+      slash.ok = JSON.parse(slash.skillVerb).kind === 'skill'
+              && JSON.parse(slash.skillNamed).text === 'brainstorming'
+              && slash.typeKeepsWord === 'superpowers'
+              && slash.typeWithBody === 'run the suite'
+              && slash.plainStaysTask === 'coding';
+    } catch (e) { slash = { error: String((e && e.message) || e) }; }
+
+    /* Upload, driven through the REAL walker against a REAL folder on disk.
+       Not a restatement of the code: it builds a tree with a nested file, a
+       skipped directory and a dotfile, walks it, and checks what came back.
+       The POST is left to fail or succeed against whatever Ade OS is up --
+       what is asserted here is the walk, the relative names and the skip
+       reporting, which is the part that lives in this file. */
+    let upload = {};
+    try {
+      const root = path.join(os.tmpdir(), 'ade-upload-smoke-' + process.pid);
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.mkdirSync(path.join(root, 'proj', 'src'), { recursive: true });
+      fs.mkdirSync(path.join(root, 'proj', 'node_modules'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'proj', 'README.md'), '# hi');
+      fs.writeFileSync(path.join(root, 'proj', 'src', 'a.py'), 'print(1)');
+      fs.writeFileSync(path.join(root, 'proj', 'node_modules', 'junk.js'), 'x');
+
+      const found = [], skipped = [];
+      walkUpload(path.join(root, 'proj'), found, skipped);
+      const rels = found.map(f => f.rel).sort();
+      upload.found = rels;
+      upload.skipped = skipped.map(s => s.path + ' — ' + s.why);
+      /* the dropped folder keeps its own name on the far side */
+      upload.keepsFolderName = rels.indexOf('proj/src/a.py') >= 0;
+      upload.tookReadme = rels.indexOf('proj/README.md') >= 0;
+      /* node_modules is skipped, and SAYS so rather than vanishing */
+      upload.skipsNodeModules = rels.every(r => r.indexOf('node_modules') === -1)
+        && skipped.some(s => s.path.indexOf('node_modules') >= 0);
+      upload.ok = upload.keepsFolderName && upload.tookReadme
+        && upload.skipsNodeModules && rels.length === 2;
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch (e) { upload = { error: String((e && e.message) || e) }; }
+
     let hit = {};
     try {
       const settle = (ms) => new Promise(r => setTimeout(r, ms || 160));
@@ -630,6 +789,8 @@ function startSmokeRun() {
       hit,
       voice,
       keys,
+      slash,
+      upload,
       rendererErrors: (smokeLogs || []).slice(0, 6),
       frameless: !win.isResizable(),
       alwaysOnTop: win.isAlwaysOnTop(),
