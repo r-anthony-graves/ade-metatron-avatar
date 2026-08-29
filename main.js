@@ -1036,6 +1036,19 @@ function startSmokeRun() {
       ask.escalationDoesNotDispatch = after === before;
       ask.escalationStagesTask = staged === '/coding fix it';
 
+      /* Fix round 1 (Task 8+9 reviewer finding): three configured roots,
+         one of them live trading code -- "Staged as a task" alone tells a
+         human nothing about WHERE it would write. adeos/api/ask.py's
+         _escalation_root() computes the real root; this only checks that
+         applyAskResult() DISPLAYS whatever it was handed. Falsify by
+         dropping the `where` clause in applyAskResult()'s escalate branch
+         -- this goes false. */
+      const namedRootOut = await js(
+        '(function(){ window.__applyAskResult({ answer: "", escalate:' +
+        ' { task_type: "coding", prompt: "fix it", root: "D:\\\\tradinglocal" } });' +
+        ' return document.getElementById("out").textContent; })()');
+      ask.escalationNamesRoot = namedRootOut.indexOf('D:\\tradinglocal') >= 0;
+
       /* A grounded reply with no escalate clears the bar and shows the
          answer, naming the root it read -- asserted against the real
          applyAskResult(), not a restatement of it. */
@@ -1050,7 +1063,8 @@ function startSmokeRun() {
 
       ask.ok = ask.bareInputAsks && ask.prefixStillDispatches && ask.shellUnchanged
              && ask.explicitAskUnchanged && ask.escalationDoesNotDispatch === true
-             && ask.escalationStagesTask && ask.clearsInputOnAnswer && ask.namesCitedRoot;
+             && ask.escalationStagesTask && ask.escalationNamesRoot
+             && ask.clearsInputOnAnswer && ask.namesCitedRoot;
     } catch (e) { ask = { error: String((e && e.message) || e) }; }
 
     /* Upload, driven through the REAL walker against a REAL folder on disk.

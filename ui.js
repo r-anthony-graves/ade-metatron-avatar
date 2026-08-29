@@ -461,7 +461,17 @@
      starts work: this function stages `/<type> <prompt>` in the bar and
      returns, and dispatchTask() above is the ONLY way from there to
      /v1/tasks. Falsify by calling dispatchTask() in the escalate branch --
-     smoke.ask.escalationDoesNotDispatch goes false. */
+     smoke.ask.escalationDoesNotDispatch goes false.
+
+     result.escalate.root names WHERE that staged Task would write --
+     ade-ai, qa-portfolio and D:\tradinglocal are all live roots and only
+     one of them is trading code, so "Staged as a task" alone tells a human
+     nothing about which. adeos/api/ask.py's _escalation_root() computes it
+     honestly (defaults to the primary, the root /v1/tasks actually runs
+     in, and only names a secondary when the prompt itself points at a path
+     inside one) -- this only ever DISPLAYS the field, never invents one
+     when it is absent. Falsify by dropping the `where` clause below --
+     smoke.ask.escalationNamesRoot goes false. */
   function applyAskResult(result) {
     result = result || {};
     var text = result.answer || '';
@@ -470,7 +480,8 @@
     }
     if (result.escalate) {
       input.value = '/' + (result.escalate.task_type || 'coding') + ' ' + (result.escalate.prompt || '');
-      say((text ? text + '\n\n' : '') + 'Staged as a task above — press Enter to run it, or edit first.');
+      var where = result.escalate.root ? (' in ' + result.escalate.root) : '';
+      say((text ? text + '\n\n' : '') + 'Staged as a task' + where + ' above — press Enter to run it, or edit first.');
     } else {
       input.value = '';
       say(text || '(no output)');
