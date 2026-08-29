@@ -982,7 +982,15 @@ function startSmokeRun() {
        advertising `/type` as the way to do exactly that.
 
        Asserted against the REAL classify(), and falsifiable: put the `+` back
-       and skillVerb/typeKeepsWord go wrong. */
+       and skillVerb/typeKeepsWord go wrong.
+
+       plainAsksNow (was plainStaysTask, until Task 9): bare text used to fall
+       through to `{kind:'task', type:'coding'}` here too -- a `/word` dead end
+       and an un-reviewed bare Task shared the same fallback branch. Task 9
+       gave bare text its own meaning (kind 'ask', route 'ground' -- see
+       smoke.ask below) so this now asserts THAT contract instead of the one
+       it replaced; smoke.ask.bareInputAsks covers the same claim from the
+       feature's own side. */
     let slash = {};
     try {
       const js = (s) => win.webContents.executeJavaScript(s);
@@ -990,13 +998,60 @@ function startSmokeRun() {
       slash.skillNamed = await js('JSON.stringify(window.__classify("/skill brainstorming"))');
       slash.typeKeepsWord = await js('window.__classify("/superpowers").type');
       slash.typeWithBody = await js('window.__classify("/qa run the suite").text');
-      slash.plainStaysTask = await js('window.__classify("fix the build").type');
+      slash.plainAsksNow = JSON.parse(await js('JSON.stringify(window.__classify("fix the build"))'));
       slash.ok = JSON.parse(slash.skillVerb).kind === 'skill'
               && JSON.parse(slash.skillNamed).text === 'brainstorming'
               && slash.typeKeepsWord === 'superpowers'
               && slash.typeWithBody === 'run the suite'
-              && slash.plainStaysTask === 'coding';
+              && slash.plainAsksNow.kind === 'ask'
+              && slash.plainAsksNow.route === 'ground';
     } catch (e) { slash = { error: String((e && e.message) || e) }; }
+
+    /* Talking to the glyph now ASKS -- POST /v1/ask, grounded against the
+       three machine-access roots -- instead of dispatching a coding Task on
+       Enter with no review step. /, ! and ? are untouched (asserted here
+       too, so a change to classify() cannot silently widen). The second half
+       is the property this task exists for: an escalation (a change request
+       /v1/ask declines to perform) must stage a Task for a human's own Enter
+       and never call dispatchTask() itself -- falsifiable by adding a
+       dispatchTask() call inside applyAskResult()'s escalate branch, which
+       makes ask.escalationDoesNotDispatch go false. */
+    let ask = {};
+    try {
+      const js = (s) => win.webContents.executeJavaScript(s);
+      const bareRoute = JSON.parse(await js('JSON.stringify(window.__classify("what is in glyph.js"))'));
+      const taskRoute = JSON.parse(await js('JSON.stringify(window.__classify("/qa run the suite"))'));
+      const shellRoute = JSON.parse(await js('JSON.stringify(window.__classify("!git status"))'));
+      const chatRoute = JSON.parse(await js('JSON.stringify(window.__classify("?what brain are you on"))'));
+      ask.bareInputAsks = bareRoute.kind === 'ask' && bareRoute.route === 'ground';
+      ask.prefixStillDispatches = taskRoute.kind === 'task' && taskRoute.type === 'qa';
+      ask.shellUnchanged = shellRoute.kind === 'shell';
+      ask.explicitAskUnchanged = chatRoute.kind === 'ask' && chatRoute.route === 'chat';
+
+      const before = await js('window.__dispatchCount()');
+      const staged = await js(
+        '(function(){ window.__applyAskResult({ answer: "", escalate: { task_type: "coding", prompt: "fix it" } });' +
+        ' return document.getElementById("in").value; })()');
+      const after = await js('window.__dispatchCount()');
+      ask.escalationDoesNotDispatch = after === before;
+      ask.escalationStagesTask = staged === '/coding fix it';
+
+      /* A grounded reply with no escalate clears the bar and shows the
+         answer, naming the root it read -- asserted against the real
+         applyAskResult(), not a restatement of it. */
+      const answered = await js(
+        '(function(){ document.getElementById("in").value = "leftover";' +
+        ' window.__applyAskResult({ answer: "glyph.js draws the core.", roots_cited: ["ade-ai"] });' +
+        ' return JSON.stringify({ input: document.getElementById("in").value,' +
+        ' out: document.getElementById("out").textContent }); })()');
+      const a = JSON.parse(answered);
+      ask.clearsInputOnAnswer = a.input === '';
+      ask.namesCitedRoot = a.out.indexOf('ade-ai') >= 0 && a.out.indexOf('glyph.js draws the core.') >= 0;
+
+      ask.ok = ask.bareInputAsks && ask.prefixStillDispatches && ask.shellUnchanged
+             && ask.explicitAskUnchanged && ask.escalationDoesNotDispatch === true
+             && ask.escalationStagesTask && ask.clearsInputOnAnswer && ask.namesCitedRoot;
+    } catch (e) { ask = { error: String((e && e.message) || e) }; }
 
     /* Upload, driven through the REAL walker against a REAL folder on disk.
        Not a restatement of the code: it builds a tree with a nested file, a
@@ -1071,6 +1126,7 @@ function startSmokeRun() {
       voice,
       keys,
       slash,
+      ask,
       upload,
       rendererErrors: (smokeLogs || []).slice(0, 6),
       frameless: !win.isResizable(),

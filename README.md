@@ -33,10 +33,17 @@ In the command bar, the chip on the left always names what will happen:
 
 | You type | Chip | Where it goes |
 |---|---|---|
-| `fix the failing test in test_gate.py` | **Task** | `POST /v1/tasks` — an agent does the work |
-| `/qa run the trust-level suite` | **Task · qa** | same, with an explicit task type |
+| `what is in glyph.js` | **Ask** | `POST /v1/ask` — a grounded read against the three machine-access roots; the reply names which root it read |
+| `fix the failing test in test_gate.py` | **Ask** → re-arms to **Task** | `POST /v1/ask` decides this is a change, does nothing, and stages `/coding fix the failing test in test_gate.py` in the bar — **nothing runs until you press Enter** |
+| `/qa run the trust-level suite` | **Task · qa** | `POST /v1/tasks` — an agent does the work, with an explicit task type |
 | `!git status` | **Shell** | `POST /v1/terminal` — direct subprocess |
-| `?what brain are you on` | **Ask** | `POST /v1/chat/completions` |
+| `?what brain are you on` | **Ask** | `POST /v1/chat/completions` — plain chat, no roots read |
+
+Bare text used to dispatch a coding Task the instant you pressed Enter, with
+no review step. It asks now: `/v1/ask` either answers directly or — for
+anything that looks like a change — does nothing and hands back what it
+would run, which lands in the bar as a staged `/<type> <prompt>` for you to
+read before it does anything. `/`, `!` and `?` are unchanged.
 
 ## Voice
 
@@ -141,8 +148,16 @@ one of these and it fires straight away, on either engine:
 
 Anything else is open speech: it is rewritten through the same leading-word
 prefixes the command bar understands when typed (`shell …` → `!`, `ask …` →
-`?`, `task <type> …` → `/<type>`) and dropped into the bar for you to review
-and press Enter — it is never dispatched on recognition alone.
+`?`, `task <type> …` → `/<type>`). A recognised `shell`/`ask`/`task` keyword,
+or an explicit task type, lands in the bar for you to review and press Enter
+— it is never dispatched on recognition alone.
+
+Bare open speech — no leading keyword — is different: it is answered
+straight away, spoken back, over `POST /v1/ask`. That is safe on recognition
+alone because asking changes nothing: `/v1/ask` either answers a question or,
+for anything that looks like a change, does nothing and hands back what it
+would run, which still lands in the bar as a staged `/<type> <prompt>` for
+your own Enter. Speech never reaches `POST /v1/tasks` by itself.
 
 ### Voice cannot approve anything
 
@@ -150,8 +165,9 @@ Ade OS decided this before the avatar existed and `VoiceInterface.can_approve()`
 returns False: recognition is probabilistic, and a misheard "yes" against a
 destructive action does not come back. Exposing recognition over HTTP would be a
 way around that rule, so `/v1/voice/listen` returns *text* and never decides —
-every phrase in the table above is a read or a task. Allow / Deny stays on a
-human's click.
+every phrase in the table above is a read, a task, or (for open speech) an ask
+that can only escalate into a staged, unrun task. Allow / Deny stays on a
+human's click, and so does every dispatch to `/v1/tasks`.
 
 ## What the glyph is telling you
 

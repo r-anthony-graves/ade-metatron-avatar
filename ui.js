@@ -6,7 +6,15 @@
  *   Shell -> POST /v1/terminal    direct subprocess. Ade OS treats this route
  *                                 as Ray's own keyboard and does NOT consult
  *                                 the gate, so it is labelled "ungated".
- *   Ask   -> POST /v1/chat/completions
+ *   Ask   -> POST /v1/ask               bare text (typed or spoken): a grounded
+ *                                        read against the three machine-access
+ *                                        roots. A change typed or spoken as bare
+ *                                        text is never run here -- /v1/ask
+ *                                        escalates it instead, and the reply
+ *                                        re-arms the bar as a Task, staged and
+ *                                        waiting on your own Enter.
+ *            POST /v1/chat/completions  only when explicitly typed with `?` --
+ *                                        ungrounded, no roots read.
  */
 'use strict';
 (function () {
@@ -205,7 +213,7 @@
   function classify(raw) {
     var v = raw.trim();
     if (v.charAt(0) === '!') return { kind: 'shell', text: v.slice(1).trim() };
-    if (v.charAt(0) === '?') return { kind: 'ask', text: v.slice(1).trim() };
+    if (v.charAt(0) === '?') return { kind: 'ask', text: v.slice(1).trim(), route: 'chat' };
     if (v.charAt(0) === '/') {
       /* `\s*([\s\S]*)` where this used to demand `\s+([\s\S]+)`. That "+" is
          the whole bug: a lone `/word` fell through to the branch below, which
@@ -225,7 +233,11 @@
       }
       return { kind: 'task', type: word, text: body };
     }
-    return { kind: 'task', type: 'coding', text: v };
+    /* Bare text asks. This used to dispatch a coding Task on Enter with no
+       review step; a grounded read answers instead, and a change hiding in
+       plain text comes back as an escalation for the human to run -- never
+       run here. See applyAskResult() and the module docstring above. */
+    return { kind: 'ask', text: v, route: 'ground' };
   }
   window.__classify = classify;   /* --smoke reaches it here */
   function paintMode() {
@@ -422,6 +434,52 @@
       + '\n\nOr /skill <name> to attach a procedure.';
   }
 
+  /* -------------------------------------------------------------- /v1/ask */
+  /* Every Task dispatch funnels through here so a count of them can be taken
+     -- the guard this task exists to protect is "an escalation never
+     dispatches", and that is only checkable if dispatching is one counted
+     function rather than scattered B.call('/v1/tasks', ...) sites. */
+  var taskDispatchCount = 0;
+  function dispatchTask(payload) {
+    taskDispatchCount++;
+    return B.call('/v1/tasks', 'POST', payload);
+  }
+  window.__dispatchCount = function () { return taskDispatchCount; };   /* --smoke reaches it here */
+
+  function askQuestion(question) {
+    return B.call('/v1/ask', 'POST', { question: question });
+  }
+
+  /* The one place a /v1/ask reply becomes UI. Shared by typed bare input and
+     spoken open speech -- one set of rules, same reason spoken keywords are
+     rewritten into the typed bar's prefixes rather than given a classifier
+     of their own (see spokenToTyped() above).
+
+     result.escalate means Ade OS decided this was a CHANGE, did nothing, and
+     handed back what it would run. VoiceInterface.can_approve() is always
+     False, so recognition -- typed or spoken -- must never be the thing that
+     starts work: this function stages `/<type> <prompt>` in the bar and
+     returns, and dispatchTask() above is the ONLY way from there to
+     /v1/tasks. Falsify by calling dispatchTask() in the escalate branch --
+     smoke.ask.escalationDoesNotDispatch goes false. */
+  function applyAskResult(result) {
+    result = result || {};
+    var text = result.answer || '';
+    if (result.roots_cited && result.roots_cited.length) {
+      text = (text ? text + '\n\n' : '') + 'From: ' + result.roots_cited.join(', ');
+    }
+    if (result.escalate) {
+      input.value = '/' + (result.escalate.task_type || 'coding') + ' ' + (result.escalate.prompt || '');
+      say((text ? text + '\n\n' : '') + 'Staged as a task above — press Enter to run it, or edit first.');
+    } else {
+      input.value = '';
+      say(text || '(no output)');
+    }
+    paintMode();
+    return text;
+  }
+  window.__applyAskResult = applyAskResult;   /* --smoke reaches it here */
+
   async function send() {
     var raw = input.value;
     if (!raw.trim() || busy || !B) return;
@@ -438,12 +496,14 @@
     var res;
     if (c.kind === 'shell') {
       res = await B.call('/v1/terminal', 'POST', { cmd: c.text });
+    } else if (c.kind === 'ask' && c.route === 'ground') {
+      res = await askQuestion(c.text);
     } else if (c.kind === 'ask') {
       res = await B.call('/v1/chat/completions', 'POST', {
         messages: [{ role: 'user', content: c.text }], stream: false
       });
     } else {
-      res = await B.call('/v1/tasks', 'POST', {
+      res = await dispatchTask({
         description: c.text, task_type: c.type || 'coding', topic: 'u/local/avatar',
         /* Every dispatch, not just the one after /skill: an attached procedure
            governs the conversation, and a mission that plans then verifies
@@ -457,6 +517,13 @@
       say((res && (res.error || ('HTTP ' + res.status))) || 'no response from Ade OS', true);
       return;
     }
+
+    if (c.kind === 'ask' && c.route === 'ground') {
+      var spoken = applyAskResult(res.data);
+      if (spoken && await B.speakEnabled()) speakText(spoken);
+      return;
+    }
+
     var text = readReply(res.data);
     say(text || '(no output)');
     input.value = ''; paintMode();
@@ -500,7 +567,7 @@
 
     var r;
     if (act.read) r = await B.call(act.read, 'GET', null);
-    else r = await B.call('/v1/tasks', 'POST',
+    else r = await dispatchTask(
       { description: act.task, task_type: act.type || 'coding', topic: 'u/local/avatar' });
 
     if (!r || !r.ok) { say((r && (r.error || 'HTTP ' + r.status)) || 'no reply', true); return; }
@@ -576,16 +643,25 @@
        text, punctuation and all. */
     var spoken = normalizeSpoken(text);
     if (VOICE_ACTIONS[spoken]) { runVoice(spoken); return; }
-    /* Open speech. Shell gets the same beat typing has: it lands in the bar
-       with its amber "ungated" chip and waits for Enter. /v1/terminal has no
-       gate in front of it, so removing the pause for voice would make speech
-       MORE powerful than typing against the one path with no gate. */
+    /* Open speech. Shell and an explicit task/ask keyword get the same beat
+       typing has: it lands in the bar with its chip and waits for Enter.
+       /v1/terminal has no gate in front of it, so removing the pause for
+       voice would make speech MORE powerful than typing against the one
+       path with no gate.
+
+       Bare open speech is different: it classifies as 'ask', route 'ground',
+       and asking changes nothing -- /v1/ask either answers a question or, for
+       a change, does nothing and hands back what it would run. So this one
+       case is sent straight away; a spoken CHANGE still cannot get past
+       applyAskResult()'s escalate branch without your own Enter. */
     var typed = spokenToTyped(text);
+    var c = classify(typed);
     toggleBar(true);
     input.value = typed;
     paintMode();
     input.focus();
-    if (classify(typed).kind !== 'shell') input.select();
+    if (c.kind !== 'shell') input.select();
+    if (c.kind === 'ask' && c.route === 'ground') void send();
   }
   window.__handleSpoken = handleSpoken;
   window.__pttUp = pttUp;   /* --smoke drives the real path with a stubbed PTT here */
