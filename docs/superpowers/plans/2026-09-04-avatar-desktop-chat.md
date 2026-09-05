@@ -2794,17 +2794,17 @@ git commit -m "feat(avatar): drop files onto the chat window"
 
 **Interfaces:** nothing new — this task proves Tasks 1–8 hold together and deletes anything they left dangling.
 
-- [ ] **Step 1: Pure-module test**
+- [x] **Step 1: Pure-module test**
 
 Run: `node --test tests/threads-store.test.js` (Node v24 for `node:test`)
 Expected: 5/5 pass — absent-file empty tabs, save/load round-trip, corrupt `.bak` recovery, `MAX_MESSAGES` newest-survive trim, unknown-tab/non-array filtering.
 
-- [ ] **Step 2: Full smoke with the summary read, not skimmed**
+- [x] **Step 2: Full smoke with the summary read, not skimmed**
 
 Run: `& .\node_modules\electron\dist\electron.exe . --smoke --smoke-wait=9000`
 Read the printed probe table and confirm each `ok: true`: `hit` (glyph click-through, never focusable), `mic` (track counts), `hearing`, `keys` (chat hotkey not an OS key, hint matches binding), `chatProbe` (window exists/hidden/resizable/taskbar/title/tabs/threads round-trip), `slashChat`, `askChat` (`__dispatchCount` still 0), `retryChat`, `smsApproval`, `dropChat`, `voiceRelay` (rewrites, staged shell never dispatches, bare ask one `/v1/ask`, `stop` opens nothing), `pttSmoke`. Any `error:` line means the task that owns it regressed — go fix that task, not this one.
 
-- [ ] **Step 3: Dead-reference audit**
+- [x] **Step 3: Dead-reference audit**
 
 The bar must leave no trace. Grep and confirm ZERO hits in `main.js`, `preload.js`, `ui.js`, `chat.js`, `README.md`:
 
