@@ -376,7 +376,7 @@ function buildMenu() {
     { label: state.online ? `Ade OS: ${state.pending ? state.pending + ' awaiting approval' : (state.busy ? 'working' : 'idle')}` : 'Ade OS: offline', enabled: false },
     { label: state.brain ? '  ' + state.brain : '  (no brain reported)', enabled: false },
     { type: 'separator' },
-    { label: 'Chat window' + (shortcuts.chat ? '' : '  (no hotkey available)'), accelerator: shortcuts.chat || undefined, click: () => openChat() },
+    { label: 'Chat window', accelerator: 'Ctrl+Alt+C', click: () => openChat() },
     { label: (pttOn ? 'Stop listening' : 'Speak a command') + (shortcuts.talk ? '' : '  (no hotkey available)'), accelerator: shortcuts.talk || undefined, click: togglePtt },
     {
       label: micLive ? 'Mute the microphone' : 'Unmute the microphone',
@@ -544,15 +544,14 @@ if (!app.requestSingleInstanceLock()) {
        to hold an OS key. A registration that fails silently is still
        indistinguishable from a dead app, so every result is recorded and the
        tray menu shows whichever one actually bound. */
-    const wanted = [
-      ['chat', ['Control+Alt+A', 'Control+Shift+A', 'Control+Alt+G'], () => {
-        /* open/focus, or hide when it already has focus -- the bar's old
-           toggle behaviour, moved to a window that can be hidden. */
-        if (chatWin && chatWin.isVisible() && chatWin.isFocused()) { flushThreads(); chatWin.hide(); }
-        else openChat();
-      }],
+const wanted = [
+      ['chat', ['Control+Alt+C'], () => openChat()],
       ['talk', ['Control+Alt+Space', 'Control+Shift+Space', 'Control+Alt+V'],
-        () => win && win.webContents.send('ui:micToggle')]
+        () => win && win.webContents.send('ui:micToggle')],
+      ['stop', ['Control+Alt+S'], () => {
+        /* stop hotkey: cuts speech and opens nothing */
+        if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.executeJavaScript('(function(){ window.__handleSpeech({ text: "stop", engine: "whisper" }); })(),0');
+      }],
     ];
     for (const [name, combos, fn] of wanted) {
       shortcuts[name] = null;
