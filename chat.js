@@ -858,7 +858,7 @@
               push(activeTab, 'system', 'text', 'No citations found.');
             }
             handled = true;
-         }
+         } else if (cmd === 'memory') {
             // Memory: store a fact in the persistent thread
             if (args) {
               // Store: key value
