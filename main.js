@@ -354,6 +354,7 @@ function createChatWindow() {
   chatWin.on('resize', saveBounds);
   chatWin.on('close', (e) => {                    /* X hides; the app lives */
     e.preventDefault();
+    flushThreads();
     if (chatWin && !chatWin.isDestroyed()) chatWin.hide();
   });
   chatWin.on('closed', () => { chatWin = null; });
@@ -476,7 +477,10 @@ ipcMain.handle('threads:load', () => {
 });
 ipcMain.on('threads:save', (_e, data) => queueThreadsSave(data));
 ipcMain.on('chat:open', (_e, tab) => openChat(tab));
-ipcMain.on('chat:hide', () => { if (chatWin && !chatWin.isDestroyed()) chatWin.hide(); });
+ipcMain.on('chat:hide', () => {
+  flushThreads();
+  if (chatWin && !chatWin.isDestroyed()) chatWin.hide();
+});
 ipcMain.on('mic:toggle', () => win && win.webContents.send('ui:micToggle'));
 ipcMain.handle('mic:status', () => !!micLive);
 ipcMain.handle('ade:speak', (_e, text) => adeSpeak(text));
