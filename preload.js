@@ -27,6 +27,10 @@ contextBridge.exposeInMainWorld('adeBridge', {
   onChatFocus: (fn) => ipcRenderer.on('chat:focus', (_e, tab) => fn(tab)),
   onSpeech: (fn) => ipcRenderer.on('chat:speech', (_e, ev) => fn(ev)),
   onMicState: (fn) => ipcRenderer.on('mic:state', (_e, live) => fn(!!live)),
+  /* Ask the glyph renderer to speak/hush. The audio engine lives there (its
+     analyser feeds the orb's mouth); the chat window only says WHEN. */
+  speakGlyph: (text) => ipcRenderer.send('chat:speak', text),
+  speakGlyphStop: () => ipcRenderer.send('chat:hush'),
 
   /* File and folder upload. The renderer never reads a file and never sends
      one: the page's CSP is `default-src 'none'`, so it cannot reach the

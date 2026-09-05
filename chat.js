@@ -177,34 +177,14 @@
   }
 
   /* -------------------------------------------------------------- speech */
-  /* Ade's reply is decoded from base64 WAV straight into Web Audio -- no blob
-     URL, so the page keeps its `default-src 'none'` policy. */
-  var actx = null, speakSrc = null, speakAn = null, speakRaf = 0, speakBuf = null;
-
-  function stopSpeaking() {
-    if (speakRaf) { cancelAnimationFrame(speakRaf); speakRaf = 0; }
-    if (speakSrc) { try { speakSrc.onended = null; speakSrc.stop(); } catch (e) {} speakSrc = null; }
-    speakAn = null;
-  }
-
-  async function speakText(text) {
+  /* The audio engine lives in the glyph renderer -- its analyser drives the
+     orb's mouth -- so the chat window only decides WHEN to speak and asks main
+     to relay. It never decodes audio itself. */
+  function speakText(text) {
     if (!B || !text) return;
-    var r = await B.speak(text);
-    if (!r || !r.ok) return;
-    stopSpeaking();
-    try {
-      if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-      if (actx.state === 'suspended') await actx.resume();
-      var raw = atob(r.wav), n = raw.length, bytes = new Uint8Array(n);
-      for (var i = 0; i < n; i++) bytes[i] = raw.charCodeAt(i);
-      var buf = await actx.decodeAudioData(bytes.buffer);
-      var src = actx.createBufferSource(); src.buffer = buf;
-      src.connect(actx.destination);
-      speakSrc = src;
-      src.onended = stopSpeaking;
-      src.start();
-    } catch (e) { stopSpeaking(); }
+    if (B.speakGlyph) B.speakGlyph(text);
   }
+  function stopSpeaking() { if (B && B.speakGlyphStop) B.speakGlyphStop(); }
   window.__stopSpeaking = stopSpeaking;
 
   /* ------------------------------------------------------------- classify */
@@ -331,7 +311,11 @@
       return;
     }
 
-    if (c.kind === 'ask' && c.route === 'ground') { applyAskResult(res.data); return; }
+    if (c.kind === 'ask' && c.route === 'ground') {
+      var spoken = applyAskResult(res.data);
+      if (spoken && await B.speakEnabled()) speakText(spoken);
+      return;
+    }
 
     var outText = readReply(res.data);
     var outKind = c.kind === 'task' ? 'task' : c.kind === 'shell' ? 'shell' : 'ask';
@@ -364,6 +348,147 @@
     return text;
   }
   window.__applyAskResult = applyAskResult;
+
+  /* ------------------------------------------------------- voice control */
+  /* One set of rules for typed AND spoken commands (see spokenToTyped):
+     speech is rewritten through the window's prefixes and the SAME
+     classifier runs. Everything dispatched here only ever reached /v1/tasks
+     through dispatchTask(), which an escalation never calls.
+     Whisper capitalises and adds terminal punctuation, but the voice-action
+     keys are bare lowercase phrases -- normalizeSpoken collapses the two. */
+  var SPOKEN_PREFIX = [
+    { re: /^\s*shell\s+/i, out: '!' },
+    { re: /^\s*ask\s+/i, out: '?' },
+    { re: /^\s*task\s+(\S+)\s+/i, out: '/' }
+  ];
+  function spokenToTyped(text) {
+    var v = String(text == null ? '' : text).trim();
+    for (var i = 0; i < SPOKEN_PREFIX.length; i++) {
+      var m = v.match(SPOKEN_PREFIX[i].re);
+      if (!m) continue;
+      if (SPOKEN_PREFIX[i].out === '/') return '/' + m[1] + ' ' + v.slice(m[0].length);
+      return SPOKEN_PREFIX[i].out + v.slice(m[0].length);
+    }
+    return v;
+  }
+  window.__spokenToTyped = spokenToTyped;
+
+  function normalizeSpoken(text) {
+    return String(text == null ? '' : text).trim().replace(/[.!?,;:]+$/, '').toLowerCase();
+  }
+  window.__normalizeSpoken = normalizeSpoken;
+
+  var VOICE_ACTIONS = {
+    'check the health':     { read: '/v1/health' },
+    'what is pending':      { read: '/v1/approvals' },
+    'list the agents':      { read: '/v1/agents' },
+    'what are you doing':   { read: '/v1/activity' },
+    'show the backlog':     { read: '/v1/pm/backlog' },
+    'run the tests':        { task: 'run the full test suite and report failures', type: 'generate_artifacts' },
+    'read the file':        { prompt: 'read the file ' },
+    'open the command window': { ui: 'window' },
+    'stop':                 { ui: 'stop' }
+  };
+
+  /* Transient status line ("…listening" / "…recognising") that never survives
+     in the persisted thread: it is replaced by later statuses and dropped by
+     any real message. */
+  var statusMsg = null;
+  function removeMsg(m) {
+    for (var t = 0; t < TABS.length; t++) {
+      var list = threads[TABS[t]];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].id === m.id) { list.splice(i, 1); break; }
+      }
+    }
+    if (m && m.tab === activeTab) renderThread();
+    persist();
+  }
+  function sayStatus(kind) {
+    var text = kind === 'listening' ? '…listening'
+             : kind === 'recognising' ? '…recognising' : '';
+    if (!text) { if (statusMsg) { removeMsg(statusMsg); statusMsg = null; } return; }
+    if (statusMsg) { statusMsg.text = text; renderThread(); persist(); }
+    else { statusMsg = push('chat', 'system', 'staged', text); }
+  }
+  window.__sayStatus = sayStatus;
+
+  /* A configured voice action. Reads answer into the Chat tab; "read the file"
+     stages its prompt; "open the command window" opens it; "stop" only
+     cuts speech and opens NOTHING -- the one exception to the auto-open. */
+  async function runVoice(phrase, engine) {
+    var act = VOICE_ACTIONS[phrase];
+    if (!act) { push('chat', 'ade', 'error', 'Heard "' + phrase + '" — no action bound to it.'); return; }
+    if (act.ui === 'stop') { stopSpeaking(); return; }
+    if (act.ui === 'window') {
+      setTab('chat'); if (B) B.openChat('chat'); focusInput();
+      return;
+    }
+    if (act.prompt) {
+      setTab('chat'); if (B) B.openChat('chat');
+      input.value = act.prompt; paintTabLabel(); focusInput();
+      return;
+    }
+    if (B) B.openChat('chat');
+    setTab('chat');
+    push('chat', 'user', 'task', phrase);
+    var r;
+    if (act.read) r = await B.call(act.read, 'GET', null);
+    else r = await dispatchTask(
+      { description: act.task, task_type: act.type || 'coding', topic: 'u/local/avatar' });
+    if (!r || !r.ok) { push('chat', 'ade', 'error', (r && (r.error || 'HTTP ' + r.status)) || 'no reply'); return; }
+    var text = readReply(r.data);
+    push('chat', 'ade', 'text', text || '(no output)');
+    if (text && await B.speakEnabled()) speakText(text);
+  }
+  window.__runVoice = runVoice;
+
+  /* The one place recognised speech becomes an action. The glyph renderer has
+     already stripped the wake word and relayed the event; this window decides
+     the tab and the beat. A ground ask is sent straight away (asking changes
+     nothing -- /v1/ask answers or stages); EVERYTHING else stages in the input
+     and waits for a human Enter, `/v1/terminal` and `/v1/tasks` included. */
+  function handleSpeech(ev) {
+    sayStatus(null);
+    if (!ev) return;
+    if (ev.status === 'listening' || ev.status === 'recognising') {
+      if (B) B.openChat('chat'); setTab('chat');
+      sayStatus(ev.status);
+      return;
+    }
+    if (ev.status === 'error') {
+      if (B) B.openChat('chat'); setTab('chat');
+      push('chat', 'ade', 'error', ev.text || 'Microphone unavailable.');
+      return;
+    }
+    if (ev.empty) {
+      if (B) B.openChat('chat'); setTab('chat');
+      push('chat', 'system', 'staged', 'Listening.');
+      focusInput();
+      return;
+    }
+    var text = String(ev.text == null ? '' : ev.text);
+    var engine = String(ev.engine || '');
+    var spoken = normalizeSpoken(text);
+    if (VOICE_ACTIONS[spoken]) { void runVoice(spoken, engine); return; }   /* stop opens nothing */
+    var typed = spokenToTyped(text);
+    var c = classify(typed);
+    if (c.kind === 'ask' && c.route === 'ground') {
+      if (B) B.openChat('chat'); setTab('chat');
+      void send(typed);
+      return;
+    }
+    var target = c.kind === 'shell' ? 'shell' : c.kind === 'ask' ? 'chat' : 'task';
+    if (B) B.openChat(target);
+    setTab(target);
+    paintTabLabel();
+    var transcript = '“' + text + '”' + (engine && engine !== 'whisper' ? ' · ' + engine : '');
+    push(target, 'system', 'staged', transcript);
+    input.value = typed;
+    focusInput();
+    if (c.kind !== 'shell') input.select();
+  }
+  window.__handleSpeech = handleSpeech;
 
   /* ---------------------------------------------- attached procedures */
   /* Names only. They ride every task this window dispatches and are merged
@@ -611,6 +736,8 @@
       renderThread();
     });
     B.onState(handleState);
+    B.onSpeech(handleSpeech);
+    B.onNote(function (m) { push('chat', 'system', 'staged', String(m)); });
     B.onChatFocus(function (tab) {
       if (tab && TABS.indexOf(tab) >= 0) setTab(tab);
       renderThread();

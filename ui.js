@@ -1,46 +1,21 @@
-/* The avatar's behaviour: drag it, talk to it, answer its approvals.
- *
- * Two different kinds of power live behind this one input, and the mode chip
- * says which is which every time you type:
- *   Task  -> POST /v1/tasks       an agent runs it; Permission.check() applies.
- *   Shell -> POST /v1/terminal    direct subprocess. Ade OS treats this route
- *                                 as Ray's own keyboard and does NOT consult
- *                                 the gate, so it is labelled "ungated".
- *   Ask   -> POST /v1/ask               bare text (typed or spoken): a grounded
- *                                        read against the three machine-access
- *                                        roots. A change typed or spoken as bare
- *                                        text is never run here -- /v1/ask
- *                                        escalates it instead, and the reply
- *                                        re-arms the bar as a Task, staged and
- *                                        waiting on your own Enter.
- *            POST /v1/chat/completions  only when explicitly typed with `?` --
- *                                        ungrounded, no roots read.
+/* The avatar's orb renderer: drag it, talk to it. The command surface has
+ * moved into the chat window (chat.js); THIS window now owns only
+ *   - drag / click / click-through hit logic
+ *   - the live microphone, push-to-talk, and the wake gate   (ptt.js)
+ *   - Ade's spoken replies: the ONE audio engine, and the glyph's mouth
+ * and RELAYS recognised speech to the chat window through main. Classify,
+ * dispatch, approvals, skills and upload live in chat.js, never here.
  */
 'use strict';
 (function () {
   var B = window.adeBridge;
   var cvs = document.getElementById('glyph');
-  var bar = document.getElementById('bar');
-  var input = document.getElementById('in');
-  var out = document.getElementById('out');
-  var mode = document.getElementById('mode');
-  var approve = document.getElementById('approve');
-  var approveWhat = document.getElementById('approveWhat');
-  var hint = document.getElementById('hint');
-  var micBtn = document.getElementById('mic');
-  /* innerHTML, not textContent: assigning textContent flattens the hint into a
-     single text node and destroys every element inside it -- which it did on
-     the very first paintMode(), taking the bold keys and the hotkey slot with
-     it. The markup here is this file's own; only the accelerator is dynamic
-     and it is written with textContent, so nothing untrusted is ever parsed. */
-  var HINT = hint.innerHTML;
-
-  var pendingApproval = null, busy = false;
 
   /* -------------------------------------------------------------- speech */
   /* Ade's reply is decoded from base64 WAV straight into Web Audio -- no blob
      URL, so the page keeps its `default-src 'none'` policy. The playing signal
-     also drives the glyph, which is what gives the avatar a mouth. */
+     also drives the glyph, which is what gives the avatar a mouth. chat.js
+     asks main to relay a "speak" event here; this is the only decoder. */
   var actx = null, speakSrc = null, speakAn = null, speakRaf = 0, speakBuf = null;
 
   function stopSpeaking() {
@@ -53,7 +28,7 @@
   async function speakText(text) {
     if (!B || !text) return;
     var r = await B.speak(text);
-    if (!r || !r.ok) { return; }
+    if (!r || !r.ok) return;
     stopSpeaking();
     try {
       if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
@@ -76,9 +51,7 @@
         if (window.GLYPH) window.GLYPH.setSpeaking(lvl);
         speakRaf = requestAnimationFrame(tick);
       })();
-    } catch (e) {
-      stopSpeaking();
-    }
+    } catch (e) { stopSpeaking(); }
   }
 
   /* ------------------------------------------------------------ sizing */
@@ -102,11 +75,6 @@
     e.preventDefault();
   });
   /* ------------------------------------------------------------ hit area */
-  /* The window is a rectangle; the avatar is not. Only about a third of it is
-     ever painted, and the transparent remainder used to swallow every click
-     meant for the window underneath -- which is indistinguishable from that
-     window having frozen. Report what is actually under the cursor and let
-     main.js hand the rest back. */
   var HIT_ALPHA = 48;        /* measured off smoke.png: the backing halo is gone by here */
   var HIT_PAD = 5;           /* a one-pixel line still has to be grabbable */
   var hitOn = null, hitAt = 0;
@@ -120,12 +88,13 @@
     var y = Math.max(0, Math.min(cvs.height - n, Math.round(py * d) - HIT_PAD));
     var data;
     try { data = probe.getImageData(x, y, n, n).data; }
-    catch (e) { return true; }        /* unreadable: keep the mouse rather than lose it */
+    catch (e) { return true; }
     for (var i = 3; i < data.length; i += 4) if (data[i] >= HIT_ALPHA) return true;
     return false;
   }
   function setHit(on) { if (on !== hitOn) { hitOn = on; if (B) B.hit(on); } }
 
+  var bar = document.getElementById('bar');     /* deleted in Task 6 */
   window.addEventListener('mousemove', function (e) {
     if (down) {
       setHit(true);                   /* never drop a drag that wanders off the lines */
@@ -133,467 +102,42 @@
       if (down.moved > 3 && B) B.dragMove();
       return;
     }
-    if (bar.classList.contains('open')) { setHit(true); return; }
+    if (bar && bar.classList.contains('open')) { setHit(true); return; }
     var now = Date.now();
-    if (now - hitAt < 16) return;     /* getImageData stalls the GPU; once a frame is plenty */
+    if (now - hitAt < 16) return;
     hitAt = now;
     setHit(painted(e.clientX, e.clientY));
   });
   document.addEventListener('mouseout', function (e) {
-    /* no relatedTarget means the pointer left the window entirely, and no
-       further mousemove is coming to switch it back off */
-    if (!e.relatedTarget && !down && !bar.classList.contains('open')) setHit(false);
+    if (!e.relatedTarget && !down && !(bar && bar.classList.contains('open'))) setHit(false);
   });
   window.addEventListener('mouseup', function () {
     if (!down) return;
     var wasClick = down.moved <= 3;
     down = null;
     if (B) B.dragEnd();
-    if (wasClick) toggleBar();
+    if (wasClick) toggleBar();         /* Task 6 turns this into B.openChat() */
   });
   cvs.addEventListener('contextmenu', function (e) { e.preventDefault(); if (B) B.menu(); });
 
-  /* ---------------------------------------------------------------- bar */
+  /* ------------------------------------------------------ bar shim (temp) */
+  /* The bar DOM survives until Task 6. Nothing in it can send any more; keeping
+     its open/closed state is what lets --smoke's hit probe pass in between. */
   function toggleBar(force) {
+    if (!bar) return;
     var open = force === undefined ? !bar.classList.contains('open') : !!force;
     bar.classList.toggle('open', open);
-    if (B) B.bar(open);      /* main gives the window focus only while this is open */
-    if (open) setTimeout(function () { input.focus(); input.select(); }, 40);
-    else { input.blur(); setHit(false); }
+    if (B) B.bar(open);
+    if (open) { var inp = document.getElementById('in'); if (inp) inp.focus(); }
+    else setHit(false);
   }
-  function say(text, isErr) {
-    out.textContent = String(text == null ? '' : text);
-    out.classList.toggle('show', !!out.textContent);
-    out.classList.toggle('err', !!isErr);
-  }
-
-  /* ---------------------------------------------------- spoken -> typed */
-  /* You cannot say "!". classify() keys on the first character, so a leading
-     spoken keyword is rewritten into the prefix it means and the SAME
-     classifier then runs. One set of rules: a second classifier for speech
-     would be a second thing to keep in step, and the two would drift.
-
-     The keywords are ordinary English words, so "ask Ade what the backlog is"
-     becomes an ask rather than a task. That ambiguity is known and accepted
-     for now -- see the spec's Assumptions section. */
-  var SPOKEN_PREFIX = [
-    { re: /^\s*shell\s+/i, out: '!' },
-    { re: /^\s*ask\s+/i, out: '?' },
-    { re: /^\s*task\s+(\S+)\s+/i, out: '/' }
-  ];
-  function spokenToTyped(text) {
-    var v = String(text == null ? '' : text).trim();
-    for (var i = 0; i < SPOKEN_PREFIX.length; i++) {
-      var m = v.match(SPOKEN_PREFIX[i].re);
-      if (!m) continue;
-      if (SPOKEN_PREFIX[i].out === '/') return '/' + m[1] + ' ' + v.slice(m[0].length);
-      return SPOKEN_PREFIX[i].out + v.slice(m[0].length);
-    }
-    return v;
-  }
-  window.__spokenToTyped = spokenToTyped;   /* --smoke reaches it here */
-
-  /* Whisper capitalises and adds terminal punctuation ("Check the health."),
-     but VOICE_ACTIONS' 9 keys are bare lowercase phrases. Without this, every
-     one of the 9 missed the map and fell through to spokenToTyped() as open
-     speech -- turning a READ (GET /v1/health) into a dispatched TASK. Used
-     for the VOICE_ACTIONS probe only; spokenToTyped() keeps punctuation,
-     because a dictated sentence should. */
-  function normalizeSpoken(text) {
-    return String(text == null ? '' : text).trim().replace(/[.!?,;:]+$/, '').toLowerCase();
-  }
-  window.__normalizeSpoken = normalizeSpoken;   /* --smoke reaches it here */
-
-  /* `/skill` is a VERB, not a task type. `/` still means "task type" for the
-     34 real ones; this reserves three words in front of them so a procedure
-     can be attached without a second syntax to remember. */
-  var SKILL_VERBS = { skill: 1, skills: 1, unskill: 1 };
-  var UPLOAD_VERBS = { upload: 1, uploads: 1 };
-
-  function classify(raw) {
-    var v = raw.trim();
-    if (v.charAt(0) === '!') return { kind: 'shell', text: v.slice(1).trim() };
-    if (v.charAt(0) === '?') return { kind: 'ask', text: v.slice(1).trim(), route: 'chat' };
-    if (v.charAt(0) === '/') {
-      /* `\s*([\s\S]*)` where this used to demand `\s+([\s\S]+)`. That "+" is
-         the whole bug: a lone `/word` fell through to the branch below, which
-         returned text:'' -- and send() answers an empty body with "Nothing to
-         send." So the exact input the hint invites ("/type task type") was the
-         input that dead-ended, with a message that reads like the bar never
-         saw the keystrokes. Ray, 2026-08-27: "nothing happens, it says Nothing
-         to send". */
-      var m = v.slice(1).match(/^(\S+)\s*([\s\S]*)$/);
-      var word = m ? m[1] : '';
-      var body = m ? m[2].trim() : '';
-      if (SKILL_VERBS[word.toLowerCase()]) {
-        return { kind: 'skill', verb: word.toLowerCase(), text: body };
-      }
-      if (UPLOAD_VERBS[word.toLowerCase()]) {
-        return { kind: 'upload', verb: word.toLowerCase(), text: body };
-      }
-      return { kind: 'task', type: word, text: body };
-    }
-    /* Bare text asks. This used to dispatch a coding Task on Enter with no
-       review step; a grounded read answers instead, and a change hiding in
-       plain text comes back as an escalation for the human to run -- never
-       run here. See applyAskResult() and the module docstring above. */
-    return { kind: 'ask', text: v, route: 'ground' };
-  }
-  window.__classify = classify;   /* --smoke reaches it here */
-  function paintMode() {
-    var c = classify(input.value);
-    mode.className = (c.kind === 'skill' || c.kind === 'upload') ? 'ask' : c.kind;
-    mode.textContent = c.kind === 'shell' ? 'Shell' : c.kind === 'ask' ? 'Ask'
-      : c.kind === 'skill' ? 'Skill'
-      : c.kind === 'upload' ? 'Upload'
-      : ('Task' + (c.type && c.type !== 'coding' ? ' · ' + c.type : ''));
-    if (c.kind === 'shell') hint.textContent = 'Direct subprocess — NOT gated by Permission.check(). Enter to run.';
-    else hint.innerHTML = HINT;
-  }
-  input.addEventListener('input', paintMode);
-  paintMode();
-
-  /* ------------------------------------------------ pull a reply out of Ade */
-  function readReply(d) {
-    if (d == null) return '';
-    if (typeof d === 'string') return d;
-    if (d.choices && d.choices[0] && d.choices[0].message) return d.choices[0].message.content || '';
-    var keys = ['output', 'result', 'answer', 'reply', 'message', 'summary', 'detail', 'error'];
-    for (var i = 0; i < keys.length; i++) {
-      var v = d[keys[i]];
-      if (typeof v === 'string' && v.trim()) return v;
-    }
-    if (d.task_id) return 'task ' + d.task_id + ' accepted';
-    try { return JSON.stringify(d, null, 2); } catch (e) { return String(d); }
-  }
-
-  /* --------------------------------------------- attached procedures */
-  /* Names only. They ride every task this bar dispatches and are merged into
-     the agent's SYSTEM PROMPT server-side (adeos/ocs/act.py). They never widen
-     the tool allowlist -- a procedure can say what to do and cannot grant the
-     means -- which is why a list chosen in a client is safe to accept. */
-  var attached = [];
-  var skillIndex = null;          /* GET /v1/skills, fetched once, on demand */
-
-  function paintSkills() {
-    var box = document.getElementById('skills');
-    if (!box) return;
-    box.innerHTML = '';
-    for (var i = 0; i < attached.length; i++) {
-      var chip = document.createElement('span');
-      chip.textContent = attached[i];       /* textContent: never parsed */
-      box.appendChild(chip);
-    }
-    box.classList.toggle('show', attached.length > 0);
-  }
-
-  async function loadSkillIndex() {
-    if (skillIndex) return skillIndex;
-    var r = await B.call('/v1/skills', 'GET');
-    if (!r || !r.ok) return null;
-    skillIndex = (r.data && r.data.skills) || [];
-    return skillIndex;
-  }
-
-  async function handleSkill(c) {
-    var rows = await loadSkillIndex();
-    if (!rows) { say('Could not read the skills index from Ade OS.', true); return; }
-
-    var wanted = c.text.replace(/^-/, '').trim();
-    var removing = c.verb === 'unskill' || /^-/.test(c.text);
-
-    if (!wanted) {
-      var on = attached.length ? 'Attached: ' + attached.join(', ') + '\n\n' : '';
-      var names = rows.filter(function (s) { return s.attachable; })
-                      .map(function (s) { return s.name; });
-      var tooBig = rows.filter(function (s) { return !s.attachable; })
-                       .map(function (s) { return s.name; });
-      /* The over-cap ones are NAMED rather than hidden. A skill that would be
-         dropped whole is invisible once attached -- the turn runs, the answer
-         looks normal, and the procedure was never there. */
-      say(on + '/skill <name> to attach, /unskill <name> to remove.\n\n'
-          + names.length + ' available:\n' + names.join(', ')
-          + (tooBig.length
-             ? '\n\nToo large to attach (over the ' + rows.length + '-skill cap): '
-               + tooBig.join(', ')
-             : ''));
-      return;
-    }
-
-    var row = null;
-    for (var i = 0; i < rows.length; i++) if (rows[i].name === wanted) row = rows[i];
-    if (!row) { say('No skill named "' + wanted + '". /skill lists them.', true); return; }
-
-    if (removing) {
-      attached = attached.filter(function (n) { return n !== wanted; });
-      paintSkills(); say('Detached ' + wanted + '.');
-    } else if (!row.attachable) {
-      /* Refuse before the fact rather than fail silently after it. */
-      say(wanted + ' is ' + row.chars + ' characters and will not fit the '
-          + 'system prompt, so it would be dropped whole rather than attached. '
-          + 'Not attaching it.', true);
-    } else if (attached.indexOf(wanted) >= 0) {
-      say(wanted + ' is already attached.');
-    } else {
-      attached.push(wanted); paintSkills();
-      say('Attached ' + wanted + '. It governs every task from this bar until '
-          + 'you /unskill it. (Not the ? ask route -- that has no tools.)');
-    }
-    input.value = ''; paintMode();
-  }
-
-  /* ------------------------------------------------------- file upload */
-  /* Two ways in, because one of them cannot always work: the window is
-     click-through wherever it is not painted (see applyHit in main.js), so an
-     OS drag lands on whatever is UNDERNEATH unless the bar is open. `/upload`
-     opens the native picker and never depends on hit-testing. */
-  function uploadReport(r) {
-    if (!r) return 'Upload failed: no reply from the main process.';
-    var lines = [];
-    lines.push(r.sent + ' of ' + r.found + ' file(s) uploaded'
-               + (r.bytes ? ' (' + Math.round(r.bytes / 1024) + ' KB)' : '')
-               + ' into uploads/.');
-    /* Named, never silent. A drop that quietly sent half a folder reads
-       exactly like one that sent all of it. */
-    if (r.skipped && r.skipped.length) {
-      lines.push('');
-      lines.push('Skipped ' + r.skipped.length + ':');
-      for (var i = 0; i < Math.min(8, r.skipped.length); i++) {
-        lines.push('  ' + r.skipped[i].path + ' — ' + r.skipped[i].why);
-      }
-      if (r.skipped.length > 8) lines.push('  … and ' + (r.skipped.length - 8) + ' more');
-    }
-    if (r.failed && r.failed.length) {
-      lines.push('');
-      lines.push('Failed ' + r.failed.length + ':');
-      for (var j = 0; j < Math.min(8, r.failed.length); j++) {
-        lines.push('  ' + r.failed[j].path + ' — ' + r.failed[j].why);
-      }
-    }
-    if (r.sent) {
-      lines.push('');
-      lines.push('Ade can read these — ask it about uploads/<name>.');
-    }
-    return lines.join('\n');
-  }
-
-  async function doUpload(paths, overwrite) {
-    if (!paths || !paths.length) { say('Nothing selected.', true); return; }
-    busy = true;
-    out.classList.add('show'); out.classList.remove('err');
-    out.innerHTML = '<span class="spin">…uploading</span>';
-    var r = await B.upload(paths, !!overwrite);
-    busy = false;
-    say(uploadReport(r), !!(r && r.failed && r.failed.length && !r.sent));
-  }
-
-  async function handleUpload(c) {
-    var wantFolder = /^folder|^dir/i.test(c.text || '');
-    var paths = await B.pick(wantFolder);
-    input.value = ''; paintMode();
-    await doUpload(paths, /overwrite/i.test(c.text || ''));
-  }
-
-  /* Drag and drop, live only while the bar is open -- which is also the only
-     time the window is not handing the mouse to whatever is behind it. */
-  window.addEventListener('dragover', function (e) {
-    if (!bar.classList.contains('open')) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
-    bar.classList.add('dropping');
-  });
-  window.addEventListener('dragleave', function () { bar.classList.remove('dropping'); });
-  window.addEventListener('drop', function (e) {
-    if (!bar.classList.contains('open')) return;
-    e.preventDefault();
-    bar.classList.remove('dropping');
-    if (busy || !B) return;
-    var paths = B.dropPaths(e.dataTransfer && e.dataTransfer.files);
-    if (!paths.length) {
-      say('Nothing droppable there. Use /upload to pick files, or '
-          + '/upload folder for a directory.', true);
-      return;
-    }
-    void doUpload(paths, false);
-  });
-
-  /* What an empty body should say. Anything but "Nothing to send.", which
-     reads as though the bar never saw the keystrokes -- and is only ever
-     reached WITH keystrokes, since send() returns silently on a blank input. */
-  async function emptyHelp(c) {
-    if (c.kind === 'shell') return 'Type a command after ! — e.g. !git status';
-    if (c.kind === 'ask') return 'Type a question after ? — e.g. ?what brain are you on';
-    var r = await B.call('/v1/task-types', 'GET');
-    var types = (r && r.ok && r.data && r.data.types) || [];
-    var names = types.map(function (t) { return t.type; });
-    var known = names.indexOf(c.type) >= 0;
-    return (known
-        ? '/' + c.type + ' needs something to do — e.g. /' + c.type + ' run the tests.'
-        : '"' + c.type + '" is not a task type.')
-      + (names.length ? '\n\nTypes: ' + names.join(', ') : '')
-      + '\n\nOr /skill <name> to attach a procedure.';
-  }
-
-  /* -------------------------------------------------------------- /v1/ask */
-  /* Every Task dispatch funnels through here so a count of them can be taken
-     -- the guard this task exists to protect is "an escalation never
-     dispatches", and that is only checkable if dispatching is one counted
-     function rather than scattered B.call('/v1/tasks', ...) sites. */
-  var taskDispatchCount = 0;
-  function dispatchTask(payload) {
-    taskDispatchCount++;
-    return B.call('/v1/tasks', 'POST', payload);
-  }
-  window.__dispatchCount = function () { return taskDispatchCount; };   /* --smoke reaches it here */
-
-  function askQuestion(question) {
-    return B.call('/v1/ask', 'POST', { question: question });
-  }
-
-  /* The one place a /v1/ask reply becomes UI. Shared by typed bare input and
-     spoken open speech -- one set of rules, same reason spoken keywords are
-     rewritten into the typed bar's prefixes rather than given a classifier
-     of their own (see spokenToTyped() above).
-
-     result.escalate means Ade OS decided this was a CHANGE, did nothing, and
-     handed back what it would run. VoiceInterface.can_approve() is always
-     False, so recognition -- typed or spoken -- must never be the thing that
-     starts work: this function stages `/<type> <prompt>` in the bar and
-     returns, and dispatchTask() above is the ONLY way from there to
-     /v1/tasks. Falsify by calling dispatchTask() in the escalate branch --
-     smoke.ask.escalationDoesNotDispatch goes false.
-
-     result.escalate.root names WHERE that staged Task would write --
-     ade-ai, qa-portfolio and D:\tradinglocal are all live roots and only
-     one of them is trading code, so "Staged as a task" alone tells a human
-     nothing about which. adeos/api/ask.py's _escalation_root() computes it
-     honestly (defaults to the primary, the root /v1/tasks actually runs
-     in, and only names a secondary when the prompt itself points at a path
-     inside one) -- this only ever DISPLAYS the field, never invents one
-     when it is absent. Falsify by dropping the `where` clause below --
-     smoke.ask.escalationNamesRoot goes false. */
-  function applyAskResult(result) {
-    result = result || {};
-    var text = result.answer || '';
-    if (result.roots_cited && result.roots_cited.length) {
-      text = (text ? text + '\n\n' : '') + 'From: ' + result.roots_cited.join(', ');
-    }
-    if (result.escalate) {
-      input.value = '/' + (result.escalate.task_type || 'coding') + ' ' + (result.escalate.prompt || '');
-      var where = result.escalate.root ? (' in ' + result.escalate.root) : '';
-      say((text ? text + '\n\n' : '') + 'Staged as a task' + where + ' above — press Enter to run it, or edit first.');
-    } else {
-      input.value = '';
-      say(text || '(no output)');
-    }
-    paintMode();
-    return text;
-  }
-  window.__applyAskResult = applyAskResult;   /* --smoke reaches it here */
-
-  async function send() {
-    var raw = input.value;
-    if (!raw.trim() || busy || !B) return;
-    var c = classify(raw);
-    if (c.kind === 'skill') { await handleSkill(c); return; }
-    if (c.kind === 'upload') { await handleUpload(c); return; }
-    if (!c.text) { say(await emptyHelp(c), true); return; }
-
-    stopSpeaking();                 /* barge-in: a new ask cuts off the old answer */
-    busy = true;
-    out.classList.add('show'); out.classList.remove('err');
-    out.innerHTML = '<span class="spin">…working</span>';
-
-    var res;
-    if (c.kind === 'shell') {
-      res = await B.call('/v1/terminal', 'POST', { cmd: c.text });
-    } else if (c.kind === 'ask' && c.route === 'ground') {
-      res = await askQuestion(c.text);
-    } else if (c.kind === 'ask') {
-      res = await B.call('/v1/chat/completions', 'POST', {
-        messages: [{ role: 'user', content: c.text }], stream: false
-      });
-    } else {
-      res = await dispatchTask({
-        description: c.text, task_type: c.type || 'coding', topic: 'u/local/avatar',
-        /* Every dispatch, not just the one after /skill: an attached procedure
-           governs the conversation, and a mission that plans then verifies
-           would otherwise lose it between the two. */
-        skills: attached.slice()
-      });
-    }
-
-    busy = false;
-    if (!res || !res.ok) {
-      say((res && (res.error || ('HTTP ' + res.status))) || 'no response from Ade OS', true);
-      return;
-    }
-
-    if (c.kind === 'ask' && c.route === 'ground') {
-      var spoken = applyAskResult(res.data);
-      if (spoken && await B.speakEnabled()) speakText(spoken);
-      return;
-    }
-
-    var text = readReply(res.data);
-    say(text || '(no output)');
-    input.value = ''; paintMode();
-
-    if (text && await B.speakEnabled()) speakText(text);
-  }
-
-  input.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') { e.preventDefault(); send(); }
-    else if (e.key === 'Escape') { e.preventDefault(); toggleBar(false); }
-    else if (e.key === 'c' && (e.ctrlKey || e.metaKey) && !window.getSelection().toString()) {
-      if (B) B.copy(out.textContent);
-    }
-  });
+  window.__toggleBar = toggleBar;
+  if (B) B.onToggleBar(function () { toggleBar(); });
 
   /* ------------------------------------------------------- voice control */
-  /* Every phrase maps to a READ or to a task. Nothing here can decide an
-     approval -- see the note at the top of ptt.js for why that line is drawn. */
-  var VOICE_ACTIONS = {
-    'check the health':     { read: '/v1/health' },
-    'what is pending':      { read: '/v1/approvals' },
-    'list the agents':      { read: '/v1/agents' },
-    'what are you doing':   { read: '/v1/activity' },
-    'show the backlog':     { read: '/v1/pm/backlog' },
-    'run the tests':        { task: 'run the full test suite and report failures', type: 'generate_artifacts' },
-    'read the file':        { prompt: 'read the file ' },
-    'open the command bar': { ui: 'bar' },
-    'stop':                 { ui: 'stop' }
-  };
-
-  async function runVoice(phrase) {
-    var act = VOICE_ACTIONS[phrase];
-    if (!act) { say('Heard "' + phrase + '" — no action bound to it.', true); return; }
-
-    if (act.ui === 'stop') { stopSpeaking(); say('Stopped.'); return; }
-    if (act.ui === 'bar')  { toggleBar(true); say('Listening for a typed command.'); return; }
-    if (act.prompt) { toggleBar(true); input.value = act.prompt; paintMode(); input.focus(); return; }
-
-    out.classList.add('show'); out.classList.remove('err');
-    out.innerHTML = '<span class="spin">…' + phrase + '</span>';
-
-    var r;
-    if (act.read) r = await B.call(act.read, 'GET', null);
-    else r = await dispatchTask(
-      { description: act.task, task_type: act.type || 'coding', topic: 'u/local/avatar' });
-
-    if (!r || !r.ok) { say((r && (r.error || 'HTTP ' + r.status)) || 'no reply', true); return; }
-    var text = readReply(r.data);
-    say(text || '(no output)');
-    if (await B.speakEnabled()) speakText(text);
-  }
-
-  /* ------------------------------------------------------- wake word */
-  /* The mic is open all the time now, so something has to separate "Ray is
-     talking to Ade" from "Ray is talking". Measured against the real engine
-     before being chosen, which is the step that was skipped for the shell/
-     task keywords: whisper hears "Ade", "Hey Ade" and "Ada" all as `Ade`,
-     so the word is forgiving of how it is said. It also drops the comma
-     about half the time, hence the optional separator. */
+  /* The microphone and the wake gate stay here; the UI they produce lives in
+     the chat window. Speech is RELAYED as an event and chat.js decides what to
+     do with it -- it never dispatches on recognition alone. */
   var WAKE = /^\s*(?:hey\s+|ok\s+)?ad[ae]y?\s*[,.!?:-]?\s+/i;
 
   function stripWake(text) {
@@ -602,123 +146,55 @@
   }
   window.__stripWake = stripWake;    /* --smoke reaches it here */
 
-  /* One utterance from the open microphone. Everything that is not addressed
-     to Ade is dropped here, before any classification and before anything
-     could be dispatched. */
+  /* One utterance from the open microphone. Everything not addressed to Ade is
+     dropped here, before any classification and before anything could be staged
+     or dispatched. */
   function onUtterance(u) {
     if (!u || !u.text) return;
     var command = stripWake(u.text);
     if (command === null) return;                  /* not for us: discard */
     /* It was for us. Flare NOW rather than when the answer comes back: this is
        the only acknowledgement that can land while the sentence is still being
-       recognised, and "did it even hear me" is the question the whole live
-       microphone exists to answer. */
+       recognised. */
     if (window.GLYPH && window.GLYPH.wake) window.GLYPH.wake();
-    if (!command) { toggleBar(true); say('Listening.'); return; }
-    handleSpoken(command, u.engine);
+    if (B) B.saySpeech({ text: command, engine: u.engine || '', empty: !command });
   }
   window.__onUtterance = onUtterance;
 
   async function pttDown() {
     if (!B || PTT.isActive()) return;
     var ok = await PTT.start(function (lvl) { if (window.GLYPH) window.GLYPH.setHearing(lvl); });
-    if (!ok) { toggleBar(true); say('Microphone unavailable.', true); return; }
-    toggleBar(true);
-    out.classList.add('show'); out.classList.remove('err');
-    out.innerHTML = '<span class="spin">…listening</span>';
+    if (!ok) { if (B) B.saySpeech({ status: 'error', text: 'Microphone unavailable.' }); return; }
+    if (B) B.saySpeech({ status: 'listening' });
   }
   async function pttUp() {
     if (!B || !PTT.isActive()) return;
     if (window.GLYPH) window.GLYPH.setHearing(0);
-    out.innerHTML = '<span class="spin">…recognising</span>';
+    if (B) B.saySpeech({ status: 'recognising' });
     var r = await PTT.stop();
-    if (!r.ok) { say('Did not catch that (' + r.error + ').', true); return; }
-    if (!r.text) { say('Did not catch that. Say one of: ' + Object.keys(VOICE_ACTIONS).slice(0, 4).join(', ') + '…', true); return; }
-    /* engine names which recogniser actually answered ("whisper" or
-       "windows") so a stopped sidecar silently falling back reads as a
-       falling-back accuracy dip, not a mysteriously worse model. Only the
-       fallback is called out -- the normal case (whisper) stays quiet. */
-    say('“' + r.text + '”' + (r.engine && r.engine !== 'whisper' ? ' · ' + r.engine : ''));
-    handleSpoken(r.text, r.engine);
+    if (!r.ok) { if (B) B.saySpeech({ status: 'error', text: 'Did not catch that (' + r.error + ').' }); return; }
+    if (!r.text) { if (B) B.saySpeech({ empty: true, text: '' }); return; }
+    if (B) B.saySpeech({ text: r.text, engine: r.engine || '' });
   }
-
-  /* The one place recognised speech becomes an action, shared by the hotkey
-     and by the always-live microphone. Two callers, one set of rules -- the
-     same reason spoken keywords are rewritten into the typed bar's prefixes
-     rather than given a classifier of their own. */
-  function handleSpoken(text, engine) {
-    /* normalizeSpoken() strips whisper's capital + terminal punctuation before
-       the lookup, and runVoice() gets the SAME normalised string -- it does its
-       own exact-key lookup, so a mismatch there would silently drop a matching
-       phrase to the open-speech path. spokenToTyped() below still gets the raw
-       text, punctuation and all. */
-    var spoken = normalizeSpoken(text);
-    if (VOICE_ACTIONS[spoken]) { runVoice(spoken); return; }
-    /* Open speech. Shell and an explicit task/ask keyword get the same beat
-       typing has: it lands in the bar with its chip and waits for Enter.
-       /v1/terminal has no gate in front of it, so removing the pause for
-       voice would make speech MORE powerful than typing against the one
-       path with no gate.
-
-       Bare open speech is different: it classifies as 'ask', route 'ground',
-       and asking changes nothing -- /v1/ask either answers a question or, for
-       a change, does nothing and hands back what it would run. So this one
-       case is sent straight away; a spoken CHANGE still cannot get past
-       applyAskResult()'s escalate branch without your own Enter. */
-    var typed = spokenToTyped(text);
-    var c = classify(typed);
-    toggleBar(true);
-    input.value = typed;
-    paintMode();
-    input.focus();
-    if (c.kind !== 'shell') input.select();
-    if (c.kind === 'ask' && c.route === 'ground') void send();
-  }
-  window.__handleSpoken = handleSpoken;
   window.__pttUp = pttUp;   /* --smoke drives the real path with a stubbed PTT here */
 
-  /* ---------------------------------------------------------- approvals */
-  function showApproval(a) {
-    pendingApproval = a;
-    if (!a) { approve.classList.remove('show'); return; }
-    var args = '';
-    try { args = JSON.stringify(a.args, null, 1); } catch (e) { args = String(a.args); }
-    approveWhat.textContent = a.tool + '\n' + args;
-    approve.classList.add('show');
-    toggleBar(true);
-  }
-  async function decide(allow) {
-    if (!pendingApproval || !B) return;
-    var id = pendingApproval.id;
-    approve.classList.remove('show');
-    var r = await B.call('/v1/approvals/' + encodeURIComponent(id) + '/decide', 'POST',
-      { allow: allow, reason: allow ? 'allowed from the desktop avatar' : 'denied from the desktop avatar', decided_by: 'human' });
-    say(r && r.ok ? (allow ? 'Allowed ' + id : 'Denied ' + id)
-                  : 'Could not decide ' + id + ': ' + ((r && (r.error || r.status)) || '?'), !(r && r.ok));
-    pendingApproval = null;
-  }
-  document.getElementById('allow').addEventListener('click', function () { decide(true); });
-  document.getElementById('deny').addEventListener('click', function () { decide(false); });
-
-  /* ------------------------------------------------------- Ade's state in */
+  /* ------------------------------------------------------ Ade's state in */
   if (B) {
-    B.onState(function (s) {
-      if (window.GLYPH) window.GLYPH.setAde(s);
-      var a = s && s.approval;
-      if (a && (!pendingApproval || pendingApproval.id !== a.id)) showApproval(a);
-      else if (!a && pendingApproval) { pendingApproval = null; approve.classList.remove('show'); }
-    });
-    B.onToggleBar(function () { toggleBar(); });
+    B.onState(function (s) { if (window.GLYPH) window.GLYPH.setAde(s); });
     B.onArm(function () { if (window.GLYPH) window.GLYPH.arm(); });
-    B.onNote(function (m) { toggleBar(true); say(m); });
     B.onSpeak(function (t) { speakText(t); });
     B.onHush(function () { stopSpeaking(); });
+    B.onPttDown(function () { pttDown(); });
+    B.onPttUp(function () { pttUp(); });
+    B.onBacking(function (on) { if (window.GLYPH) window.GLYPH.setBacking(on); });
+
     /* ------------------------------------------------ the live mic */
-    /* Live at launch, per Ray. `mic` defaults TRUE when the key is absent so
-       a fresh install behaves as asked; the tray toggle writes it. */
+    /* Live at launch, per Ray. `mic` defaults TRUE when the key is absent so a
+       fresh install behaves as asked; the tray toggle writes it. */
     function setMicUi() {
       var live = window.PTT && window.PTT.isLive && window.PTT.isLive();
       if (window.GLYPH && window.GLYPH.setMic) window.GLYPH.setMic(live ? 1 : 0);
+      var micBtn = document.getElementById('mic');     /* bar; deleted Task 6 */
       if (micBtn) {
         micBtn.textContent = live ? 'Mute' : 'Unmute';
         micBtn.classList.toggle('muted', !live);
@@ -730,44 +206,20 @@
     window.__setMicUi = setMicUi;
 
     async function micOn() {
-      /* Your voice goes to setHearing, not setSpeaking, and it goes at full
-         level. It used to arrive on Ade's own mouth channel at 0.55, which is
-         both why being heard looked like being talked at and why it barely
-         moved. */
       var ok = await window.PTT.live(onUtterance, function (lvl) {
         if (window.GLYPH) window.GLYPH.setHearing(lvl);
-      }, function (inFlight) {
-        /* ONLY while the bar is already open. The microphone is open all the
-           time and every utterance in the room goes to the recogniser before
-           the wake gate can judge it, so an unconditional indicator would
-           flash at every passing conversation -- and at ~150ms per
-           recognition it would be a flicker, not information. Open, you are
-           interacting, and the gap is worth naming. */
-        if (!bar.classList.contains('open')) return;
-        if (inFlight) {
-          out.classList.add('show'); out.classList.remove('err');
-          out.innerHTML = '<span class="spin">…recognising</span>';
-        } else if (/…recognising/.test(out.innerHTML)) {
-          out.innerHTML = '';
-        }
       });
-      if (!ok) say('Could not open the microphone.', true);
+      if (!ok) { if (B) B.saySpeech({ status: 'error', text: 'Could not open the microphone.' }); }
       setMicUi();
       return ok;
     }
     function micOff() { window.PTT.mute(); if (window.GLYPH) window.GLYPH.setHearing(0); setMicUi(); }
     async function micToggle() { if (window.PTT.isLive()) micOff(); else await micOn(); }
     window.__micToggle = micToggle;
-    if (micBtn) micBtn.addEventListener('click', function () { void micToggle(); });
     B.onMicToggle(function () { void micToggle(); });
 
-    B.onPttDown(function () { pttDown(); });
-    B.onPttUp(function () { pttUp(); });
-    B.onBacking(function (on) { if (window.GLYPH) window.GLYPH.setBacking(on); });
-    /* The hint names the key that actually bound. Hardcoding one is how this
-       line came to advertise Ctrl+Alt+Space while Ctrl+Shift+Space was the
-       live binding -- and a documented key that does nothing is exactly what
-       a dead app looks like. */
+    /* The hint names the key that actually bound (lives in the chat window
+       hint from Task 2 on; the glyph bar's copy is deleted with the bar). */
     var PRETTY_KEY = { Control: 'Ctrl', Super: 'Win' };
     B.shortcuts().then(function (k) {
       var el = document.getElementById('talkKey');
@@ -775,7 +227,6 @@
       el.textContent = (k && k.talk)
         ? String(k.talk).split('+').map(function (t) { return PRETTY_KEY[t] || t; }).join('+')
         : 'tray menu';
-      HINT = hint.innerHTML;     /* HINT was captured before this resolved */
     });
     B.config().then(function (c) {
       if (c && c.mic !== false) { void micOn(); } else { setMicUi(); }

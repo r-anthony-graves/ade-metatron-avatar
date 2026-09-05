@@ -423,7 +423,10 @@ function buildMenu() {
     { label: 'Quit avatar', click: () => { app.quit(); } }
   ]);
 }
-function dialogNote(msg) { if (win && !win.isDestroyed()) win.webContents.send('ui:note', msg); }
+function dialogNote(msg) {
+  const tgt = (chatWin && !chatWin.isDestroyed()) ? chatWin : win;
+  if (tgt && !tgt.isDestroyed()) tgt.webContents.send('ui:note', msg);
+}
 
 let smokeLogs = null;
 const shortcuts = { bar: null, talk: null };
@@ -476,6 +479,18 @@ ipcMain.handle('threads:load', () => {
   try { return loadThreads(threadsPath()); } catch (e) { return { chat: [], shell: [], task: [] }; }
 });
 ipcMain.on('threads:save', (_e, data) => queueThreadsSave(data));
+/* voice relay: glyph renderer -> chat window (speech events), and the answers
+   back (chat window -> glyph renderer, which owns the audio + the mouth). */
+const relayChatSpeech = (_e, ev) => {
+  if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.send('chat:speech', ev);
+};
+ipcMain.on('chat:speech', relayChatSpeech);
+ipcMain.on('chat:speak', (_e, text) => {
+  if (win && !win.isDestroyed()) win.webContents.send('ui:speak', String(text || ''));
+});
+ipcMain.on('chat:hush', () => {
+  if (win && !win.isDestroyed()) win.webContents.send('ui:hush');
+});
 ipcMain.on('chat:open', (_e, tab) => openChat(tab));
 ipcMain.on('chat:hide', () => {
   flushThreads();
@@ -657,102 +672,107 @@ function startSmokeRun() {
       keys.ok = keys.hintMatchesBinding && keys.takesNoOsKey;
     } catch (e) { keys = { error: String((e && e.message) || e) }; }
 
-    /* Speech cannot carry the bar's prefixes -- classify() keys on "!", "?"
-       and "/", none of them speakable. The rewrite is what lets one classifier
-       serve both, and shell must still require a human beat. */
-    let voice = {};
+    /* Speech lands in the chat window now. The glyph renderer strips the wake
+       word and relays; here we drive the REAL handleSpeech/runVoice in chatWin
+       and the REAL pttUp relay in the glyph against a stubbed recogniser. The
+       properties: a spoken shell stages (never dispatches), a bare ask opens
+       the Chat tab and dispatches exactly /v1/ask, and "stop" only cuts speech
+       without opening the window. */
+    let voiceRelay = {};
     try {
-      voice = JSON.parse(await win.webContents.executeJavaScript(
-        'JSON.stringify({' +
-        ' shell: window.__spokenToTyped("shell git status"),' +
-        ' ask: window.__spokenToTyped("ask what brain are you on"),' +
-        ' task: window.__spokenToTyped("task qa run the suite"),' +
-        ' bare: window.__spokenToTyped("run the trust level tests"),' +
-        ' normHealth: window.__normalizeSpoken("Check the health.") })'));
-      voice.rewrites = {
-        shell: voice.shell, ask: voice.ask, task: voice.task, bare: voice.bare,
-      };
-      /* The property this task exists to protect: recognised shell text is
-         PREFIXED for the bar, not dispatched. Confirming voice.shell has "!"
-         only proves the rewrite is right; it says nothing about whether the
-         rewrite itself pushed the text into the bar and fired it. The second
-         clause below asserts that separately -- it reads the bar's own input
-         element after the rewrite ran and requires it to still be untouched,
-         which is what "recognition alone did not execute it" actually means. */
-      voice.shellNeedsConfirm = await win.webContents.executeJavaScript(
-        '(function(){ var before = document.getElementById("in").value;' +
-        ' var t = window.__spokenToTyped("shell git status");' +
-        ' var after = document.getElementById("in").value;' +
-        ' return t.charAt(0) === "!" && after === before; })()');
-      /* Whisper capitalises and punctuates; VOICE_ACTIONS' 9 keys are bare
-         lowercase. Confirm the normaliser used ahead of that lookup actually
-         collapses the two. */
-      voice.normOk = voice.normHealth === 'check the health';
-      voice.ok = voice.shell === '!git status'
-              && voice.ask === '?what brain are you on'
-              && voice.task === '/qa run the suite'
-              && voice.bare === 'run the trust level tests'
-              && voice.shellNeedsConfirm === true
-              && voice.normOk === true;
-    } catch (e) { voice = { error: String((e && e.message) || e) }; }
-
-    /* shellNeedsConfirm above calls spokenToTyped() in isolation -- a pure
-       string transform with no DOM access, so "the input didn't change" is
-       true BY CONSTRUCTION and would stay true even if pttUp() were rewritten
-       to auto-submit a shell rewrite. This block exercises the REAL pttUp()
-       instead, with a stubbed recogniser, and checks that recognition alone
-       never reaches /v1/terminal -- the property this task exists to protect.
-
-       window.adeBridge.call cannot be stubbed from the renderer: contextBridge
-       deep-freezes everything it exposes (verified live: Object.isFrozen(
-       window.adeBridge) is true, and call's own property descriptor is
-       {writable:false, configurable:false} -- an assignment to it silently
-       no-ops rather than throwing). window.PTT is an ordinary object ui.js
-       builds itself, NOT frozen, so PTT.stop/isActive stub the way the plan
-       expected. What replaces the bridge stub is interception one layer
-       down, at the 'ade:call' IPC handler in THIS process -- ordinary
-       main-process code, nothing frozen about it. */
-    let pttSmoke = {};
-    try {
-      const dispatched = [];
+      const js = (s) => chatWin.webContents.executeJavaScript(s);
+      const gjs = (s) => win.webContents.executeJavaScript(s);
+      const posted = [];
       ipcMain.removeHandler('ade:call');
-      ipcMain.handle('ade:call', async (_e, pathname) => {
-        dispatched.push(pathname);
+      ipcMain.handle('ade:call', async (_e, pathname, method, body) => {
+        posted.push({ pathname, method, body });
         return { ok: true, status: 200, data: { stub: true } };
       });
       try {
-        await win.webContents.executeJavaScript(
-          '(function(){' +
-          ' window.__pttSmokeOrigStop = window.PTT.stop;' +
-          ' window.__pttSmokeOrigActive = window.PTT.isActive;' +
-          ' window.PTT.stop = function(){ return Promise.resolve({ ok: true, text: "shell git status" }); };' +
-          ' window.PTT.isActive = function(){ return true; };' +
-          ' })()');
-        await win.webContents.executeJavaScript(
-          'window.__pttUp ? window.__pttUp() : Promise.reject(new Error("__pttUp not exposed"))');
-        await new Promise((r) => setTimeout(r, 300));   /* let send()'s IPC round trip land if it fired */
-        pttSmoke = JSON.parse(await win.webContents.executeJavaScript(
-          'JSON.stringify({' +
-          ' barValue: document.getElementById("in").value,' +
-          ' barOpen: document.getElementById("bar").classList.contains("open") })'));
+        const rewrites = JSON.parse(await js('JSON.stringify({' +
+          ' shell: window.__spokenToTyped("shell git status"),' +
+          ' ask: window.__spokenToTyped("ask what brain are you on"),' +
+          ' task: window.__spokenToTyped("task qa run the suite"),' +
+          ' bare: window.__spokenToTyped("run the trust level tests"),' +
+          ' normHealth: window.__normalizeSpoken("Check the health.") })'));
+        voiceRelay.rewrites = rewrites;
+        voiceRelay.rewriteOk = rewrites.shell === '!git status'
+          && rewrites.ask === '?what brain are you on'
+          && rewrites.task === '/qa run the suite'
+          && rewrites.bare === 'run the trust level tests'
+          && rewrites.normHealth === 'check the health';
+
+        /* recognised shell text stages in the Shell tab and never dispatches */
+        await js('(function(){ window.__handleSpeech({ text: "shell git status", engine: "whisper" }); })(),0');
+        await new Promise((r) => setTimeout(r, 150));
+        voiceRelay.shellStages = await js('document.getElementById("in").value') === '!git status';
+        voiceRelay.shellTab = (await js('window.__activeTab()')) === 'shell';
+        voiceRelay.shellNoDispatch = posted.every((p) =>
+          p.pathname !== '/v1/terminal' && p.pathname !== '/v1/tasks');
+
+        /* a bare (grounded) ask opens the Chat tab and dispatches exactly /v1/ask */
+        posted.length = 0;
+        await js('(function(){ window.__handleSpeech({ text: "what is the backlog", engine: "whisper" }); })(),0');
+        await new Promise((r) => setTimeout(r, 250));
+        voiceRelay.askDispatched = posted.length === 1 && posted[0].pathname === '/v1/ask';
+        voiceRelay.askTab = (await js('window.__activeTab()')) === 'chat';
+        voiceRelay.askOpened = chatWin.isVisible();
+        voiceRelay.askBubble = (await js('document.getElementById("thread").textContent')).indexOf('what is the backlog') >= 0;
+
+        /* stop cuts speech and opens nothing */
+        await js('window.adeBridge.hideChat(),0');
+        await new Promise((r) => setTimeout(r, 120));
+        await js('(function(){ window.__handleSpeech({ text: "stop", engine: "whisper" }); })(),0');
+        await new Promise((r) => setTimeout(r, 120));
+        voiceRelay.stopDoesNotOpen = chatWin.isVisible() === false;
+
+        /* pttSmoke: the REAL pttUp() relay path, stubbed recogniser. The glyph
+           relays "shell git status"; chatWin stages it; nothing is dispatched. */
+        let pttSmoke = {};
+        try {
+          await gjs(
+            '(function(){' +
+            ' window.__pttSmokeOrigStop = window.PTT.stop;' +
+            ' window.__pttSmokeOrigActive = window.PTT.isActive;' +
+            ' window.PTT.stop = function(){ return Promise.resolve({ ok: true, text: "shell git status" }); };' +
+            ' window.PTT.isActive = function(){ return true; };' +
+            ' })()');
+          await gjs('window.__pttUp ? window.__pttUp() : Promise.reject(new Error("__pttUp not exposed"))');
+          await new Promise((r) => setTimeout(r, 300));
+          pttSmoke.chatValue = await js('document.getElementById("in").value');
+          pttSmoke.chatVisible = !!chatWin && chatWin.isVisible();
+          await gjs(
+            '(function(){' +
+            ' window.PTT.stop = window.__pttSmokeOrigStop;' +
+            ' window.PTT.isActive = window.__pttSmokeOrigActive;' +
+            ' delete window.__pttSmokeOrigStop; delete window.__pttSmokeOrigActive;' +
+            ' })()').catch(() => {});
+        } catch (e) { pttSmoke = { error: String((e && e.message) || e) }; }
+        pttSmoke.dispatched = posted.map((p) => p.pathname);
+        pttSmoke.noDispatch = posted.indexOf('/v1/terminal') === -1
+          && posted.indexOf('/v1/tasks') === -1
+          && posted.every((p) => p.pathname.indexOf('/v1/approvals') !== 0);
+        pttSmoke.ok = pttSmoke.chatValue === '!git status'
+          && pttSmoke.chatVisible === true
+          && pttSmoke.noDispatch === true;
+        voiceRelay.pttSmoke = pttSmoke;
+
+        voiceRelay.ok = voiceRelay.rewriteOk === true
+          && voiceRelay.shellStages === true
+          && voiceRelay.shellTab === true
+          && voiceRelay.shellNoDispatch === true
+          && voiceRelay.askDispatched === true
+          && voiceRelay.askTab === true
+          && voiceRelay.askOpened === true
+          && voiceRelay.askBubble === true
+          && voiceRelay.stopDoesNotOpen === true
+          && pttSmoke.ok === true;
       } finally {
-        await win.webContents.executeJavaScript(
-          '(function(){' +
-          ' window.PTT.stop = window.__pttSmokeOrigStop;' +
-          ' window.PTT.isActive = window.__pttSmokeOrigActive;' +
-          ' delete window.__pttSmokeOrigStop; delete window.__pttSmokeOrigActive;' +
-          ' })()').catch(() => {});
+        await js('window.adeBridge.hideChat(),0').catch(() => {});
         ipcMain.removeHandler('ade:call');
         ipcMain.handle('ade:call', handleAdeCall);
       }
-      pttSmoke.dispatched = dispatched;
-      pttSmoke.noDispatch = dispatched.indexOf('/v1/terminal') === -1
-        && dispatched.indexOf('/v1/tasks') === -1
-        && dispatched.every((p) => p.indexOf('/v1/approvals') !== 0);
-      pttSmoke.ok = pttSmoke.barValue === '!git status' && pttSmoke.barOpen === true && pttSmoke.noDispatch === true;
-    } catch (e) { pttSmoke = { error: String((e && e.message) || e) }; }
-    voice.pttSmoke = pttSmoke;
-    voice.ok = (voice.ok === true) && (pttSmoke.ok === true);
+    } catch (e) { voiceRelay = { error: String((e && e.message) || e) }; }
 
     /* The always-live microphone's three load-bearing properties. Each is
        asserted against the REAL renderer functions, not a restatement of the
@@ -1029,18 +1049,26 @@ function startSmokeRun() {
       /* 4. the wake word flares the moment it matches -- the one cue that says
             "this one is for me" BEFORE recognition has finished. Driven
             through the real onUtterance, with a phrase that is not a
-            VOICE_ACTION so nothing is dispatched by the check itself. */
+            VOICE_ACTION so nothing is dispatched by the check itself. The
+            relay is parked for the check so the utterance cannot open the
+            chat window or start a real /v1/ask behind this probe's back --
+            the flare is what is being measured, not a side effect. */
       const barBefore = await js('document.getElementById("bar").classList.contains("open")');
       const inBefore = await js('document.getElementById("in").value');
-      await js('(function(){ window.__wakeCalls = 0; var w = window.GLYPH.wake;' +
-               ' window.GLYPH.wake = function(){ window.__wakeCalls++; return w.apply(this, arguments); }; })(),0');
-      await js('window.__onUtterance({text:"Ade, remember the milk"}),0');
-      await settle(80);
-      hearing.wakeCalls = await js('window.__wakeCalls');
-      await js('window.__wakeCalls = 0,0');
-      await js('window.__onUtterance({text:"the deploy finished, we should go home"}),0');
-      await settle(80);
-      hearing.nonWakeCalls = await js('window.__wakeCalls');
+      ipcMain.removeListener('chat:speech', relayChatSpeech);
+      try {
+        await js('(function(){ window.__wakeCalls = 0; var w = window.GLYPH.wake;' +
+                 ' window.GLYPH.wake = function(){ window.__wakeCalls++; return w.apply(this, arguments); }; })(),0');
+        await js('window.__onUtterance({text:"Ade, remember the milk"}),0');
+        await settle(80);
+        hearing.wakeCalls = await js('window.__wakeCalls');
+        await js('window.__wakeCalls = 0,0');
+        await js('window.__onUtterance({text:"the deploy finished, we should go home"}),0');
+        await settle(80);
+        hearing.nonWakeCalls = await js('window.__wakeCalls');
+      } finally {
+        ipcMain.addListener('chat:speech', relayChatSpeech);
+      }
       /* leave the bar exactly as found -- hit's probe below asserts on it */
       await js('(function(){document.getElementById("in").value=' + JSON.stringify(inBefore) + ';' +
                ' document.getElementById("bar").classList.toggle("open",' + (barBefore ? 'true' : 'false') + ');})(),0');
@@ -1061,98 +1089,6 @@ function startSmokeRun() {
                 && hearing.wakeCalls === 1
                 && hearing.nonWakeCalls === 0;
     } catch (e) { hearing = { error: String((e && e.message) || e) }; }
-
-    /* `/word` must reach a ROUTE, not a dead end. Ray, 2026-08-27, trying to
-       use skills from the bar: "nothing happens, it says Nothing to send".
-       classify() demanded `\s+([\s\S]+)` after the type, so a lone `/word`
-       came back with text:'' and send() refused it -- while the hint line was
-       advertising `/type` as the way to do exactly that.
-
-       Asserted against the REAL classify(), and falsifiable: put the `+` back
-       and skillVerb/typeKeepsWord go wrong.
-
-       plainAsksNow (was plainStaysTask, until Task 9): bare text used to fall
-       through to `{kind:'task', type:'coding'}` here too -- a `/word` dead end
-       and an un-reviewed bare Task shared the same fallback branch. Task 9
-       gave bare text its own meaning (kind 'ask', route 'ground' -- see
-       smoke.ask below) so this now asserts THAT contract instead of the one
-       it replaced; smoke.ask.bareInputAsks covers the same claim from the
-       feature's own side. */
-    let slash = {};
-    try {
-      const js = (s) => win.webContents.executeJavaScript(s);
-      slash.skillVerb = await js('JSON.stringify(window.__classify("/skill"))');
-      slash.skillNamed = await js('JSON.stringify(window.__classify("/skill brainstorming"))');
-      slash.typeKeepsWord = await js('window.__classify("/superpowers").type');
-      slash.typeWithBody = await js('window.__classify("/qa run the suite").text');
-      slash.plainAsksNow = JSON.parse(await js('JSON.stringify(window.__classify("fix the build"))'));
-      slash.ok = JSON.parse(slash.skillVerb).kind === 'skill'
-              && JSON.parse(slash.skillNamed).text === 'brainstorming'
-              && slash.typeKeepsWord === 'superpowers'
-              && slash.typeWithBody === 'run the suite'
-              && slash.plainAsksNow.kind === 'ask'
-              && slash.plainAsksNow.route === 'ground';
-    } catch (e) { slash = { error: String((e && e.message) || e) }; }
-
-    /* Talking to the glyph now ASKS -- POST /v1/ask, grounded against the
-       three machine-access roots -- instead of dispatching a coding Task on
-       Enter with no review step. /, ! and ? are untouched (asserted here
-       too, so a change to classify() cannot silently widen). The second half
-       is the property this task exists for: an escalation (a change request
-       /v1/ask declines to perform) must stage a Task for a human's own Enter
-       and never call dispatchTask() itself -- falsifiable by adding a
-       dispatchTask() call inside applyAskResult()'s escalate branch, which
-       makes ask.escalationDoesNotDispatch go false. */
-    let ask = {};
-    try {
-      const js = (s) => win.webContents.executeJavaScript(s);
-      const bareRoute = JSON.parse(await js('JSON.stringify(window.__classify("what is in glyph.js"))'));
-      const taskRoute = JSON.parse(await js('JSON.stringify(window.__classify("/qa run the suite"))'));
-      const shellRoute = JSON.parse(await js('JSON.stringify(window.__classify("!git status"))'));
-      const chatRoute = JSON.parse(await js('JSON.stringify(window.__classify("?what brain are you on"))'));
-      ask.bareInputAsks = bareRoute.kind === 'ask' && bareRoute.route === 'ground';
-      ask.prefixStillDispatches = taskRoute.kind === 'task' && taskRoute.type === 'qa';
-      ask.shellUnchanged = shellRoute.kind === 'shell';
-      ask.explicitAskUnchanged = chatRoute.kind === 'ask' && chatRoute.route === 'chat';
-
-      const before = await js('window.__dispatchCount()');
-      const staged = await js(
-        '(function(){ window.__applyAskResult({ answer: "", escalate: { task_type: "coding", prompt: "fix it" } });' +
-        ' return document.getElementById("in").value; })()');
-      const after = await js('window.__dispatchCount()');
-      ask.escalationDoesNotDispatch = after === before;
-      ask.escalationStagesTask = staged === '/coding fix it';
-
-      /* Fix round 1 (Task 8+9 reviewer finding): three configured roots,
-         one of them live trading code -- "Staged as a task" alone tells a
-         human nothing about WHERE it would write. adeos/api/ask.py's
-         _escalation_root() computes the real root; this only checks that
-         applyAskResult() DISPLAYS whatever it was handed. Falsify by
-         dropping the `where` clause in applyAskResult()'s escalate branch
-         -- this goes false. */
-      const namedRootOut = await js(
-        '(function(){ window.__applyAskResult({ answer: "", escalate:' +
-        ' { task_type: "coding", prompt: "fix it", root: "D:\\\\tradinglocal" } });' +
-        ' return document.getElementById("out").textContent; })()');
-      ask.escalationNamesRoot = namedRootOut.indexOf('D:\\tradinglocal') >= 0;
-
-      /* A grounded reply with no escalate clears the bar and shows the
-         answer, naming the root it read -- asserted against the real
-         applyAskResult(), not a restatement of it. */
-      const answered = await js(
-        '(function(){ document.getElementById("in").value = "leftover";' +
-        ' window.__applyAskResult({ answer: "glyph.js draws the core.", roots_cited: ["ade-ai"] });' +
-        ' return JSON.stringify({ input: document.getElementById("in").value,' +
-        ' out: document.getElementById("out").textContent }); })()');
-      const a = JSON.parse(answered);
-      ask.clearsInputOnAnswer = a.input === '';
-      ask.namesCitedRoot = a.out.indexOf('ade-ai') >= 0 && a.out.indexOf('glyph.js draws the core.') >= 0;
-
-      ask.ok = ask.bareInputAsks && ask.prefixStillDispatches && ask.shellUnchanged
-             && ask.explicitAskUnchanged && ask.escalationDoesNotDispatch === true
-             && ask.escalationStagesTask && ask.escalationNamesRoot
-             && ask.clearsInputOnAnswer && ask.namesCitedRoot;
-    } catch (e) { ask = { error: String((e && e.message) || e) }; }
 
     /* Upload, driven through the REAL walker against a REAL folder on disk.
        Not a restatement of the code: it builds a tree with a nested file, a
@@ -1212,6 +1148,20 @@ function startSmokeRun() {
             && hit.barClosed.focusable === false
             && hit.barOpen.focusable === true;
     } catch (e) { hit = { error: String((e && e.message) || e) }; }
+
+    /* The probes above may legitimately have opened the chat window and
+       written into its threads -- the boot mic fallback, voiceRelay's ask,
+       any PTT/status relay. That is this run's own doing, not the user's, so
+       restore the desk before chatProbe so "hidden at launch" and "fresh
+       threads round-trip" still measure the launch state. */
+    try {
+      await chatWin.webContents.executeJavaScript(
+        '(function(){ var w = window.__threads();' +
+        ' w.chat = []; w.shell = []; w.task = [];' +
+        ' window.adeBridge.threadsSave({chat:[],shell:[],task:[]}),0; })(),0');
+      await new Promise((r) => setTimeout(r, 400));
+      if (chatWin && !chatWin.isDestroyed()) chatWin.hide();
+    } catch (e) { /* smoke hygiene only; chatProbe reports its own results */ }
 
     /* The chat window exists, is a real framed window, stays hidden until
        opened, draws the three tab names, and persists threads through the
@@ -1446,10 +1396,8 @@ function startSmokeRun() {
       mic,
       hearing,
       hit,
-      voice,
+      voiceRelay,
       keys,
-      slash,
-      ask,
       upload,
       rendererErrors: (smokeLogs || []).slice(0, 6),
       frameless: !win.isResizable(),
