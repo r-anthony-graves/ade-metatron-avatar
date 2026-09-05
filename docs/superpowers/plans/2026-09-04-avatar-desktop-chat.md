@@ -1273,6 +1273,18 @@ In `main.js` `startSmokeRun()`, insert immediately BEFORE the `console.log('SMOK
         await js('window.__showApproval({ id: "s2", tool: "shell.exec", args: { cmd: "whoami" } }),0');
         await new Promise((r) => setTimeout(r, 160));
         smsApproval.secondCard = (await js('document.querySelectorAll("#thread .msg.approval").length')) === 2;
+        smsApproval.secondButtons = await js('document.querySelectorAll("#thread button.approve, #thread button.deny").length');
+
+        await js('window.__showApproval(null),0');       /* resolved server-side */
+        await new Promise((r) => setTimeout(r, 60));
+        smsApproval.mootButtons = await js('document.querySelectorAll("#thread button.approve, #thread button.deny").length');
+        smsApproval.mootText = (await js('document.getElementById("thread").textContent')).indexOf('no longer pending') >= 0;
+        smsApproval.mootKeepsCards = (await js('document.querySelectorAll("#thread .msg.approval").length')) === 2;
+
+        await js('window.__showApproval({ id: "s3", tool: "git.status", args: {} }),0');
+        await new Promise((r) => setTimeout(r, 160));
+        smsApproval.thirdCard = (await js('document.querySelectorAll("#thread .msg.approval").length')) === 3;
+        smsApproval.thirdButtons = await js('document.querySelectorAll("#thread button.approve, #thread button.deny").length');
 
         smsApproval.ok = smsApproval.raised === true
           && smsApproval.tab === 'task'
@@ -1283,11 +1295,17 @@ In `main.js` `startSmokeRun()`, insert immediately BEFORE the `console.log('SMOK
           && smsApproval.buttonsAfterDecide === 0
           && smsApproval.decidedText === true
           && smsApproval.noDupe === true
-          && smsApproval.secondCard === true;
+          && smsApproval.secondCard === true
+          && smsApproval.secondButtons === 2
+          && smsApproval.mootButtons === 0
+          && smsApproval.mootText === true
+          && smsApproval.mootKeepsCards === true
+          && smsApproval.thirdCard === true
+          && smsApproval.thirdButtons === 2;
       } finally {
         await js('window.adeBridge.hideChat(),0').catch(() => {});
         await js('(function(){ var w = window.__threads();' +
-                 ' w.task = w.task.filter(function(m){ return !(m.kind === "approval" && m.meta && /^s[12]$/.test(m.meta.approval && m.meta.approval.id)); });' +
+                 ' w.task = w.task.filter(function(m){ return !(m.kind === "approval" && m.meta && /^s[123]$/.test(m.meta.approval && m.meta.approval.id)); });' +
                  ' window.adeBridge.threadsSave({ chat: w.chat, shell: w.shell, task: w.task }),0; })(),0').catch(() => {});
         ipcMain.removeHandler('ade:call');
         ipcMain.handle('ade:call', handleAdeCall);
@@ -1320,6 +1338,7 @@ Expected: FAIL — `smsApproval` lands in the `catch` (`__showApproval` is not d
   .msg.approval button.approve { color:#fff; background:#6e9a35; border:1px solid #5c8129; }
   .msg.approval button.deny { color:var(--red); background:#fff; border:1px solid #d5aab0; }
   .msg.approval .decision { padding:2px 0; font-weight:600; color:#6e9a35; }
+  .msg.approval .moot { margin-top:2px; font-style:italic; color:#8a8f98; }
 ```
 
 **3b. `chat.js`** — give every rendered message a `data-id` and teach `renderMsg` the approval card. In Task 2's `renderMsg`, right after `wrap.className = 'msg ' + m.role;` add:
@@ -1343,6 +1362,13 @@ and, immediately after the `m.role === 'system'` block, insert:
                       : m.meta.decided === 'deny' ? 'Denied ' + (appr.id || '')
                       : m.meta.decided;
         card.appendChild(d);
+      } else if (m.meta && m.meta.moot) {
+        /* The approval vanished from the state stream (resolved elsewhere):
+           keep the card as a persisted read-only record, but no dead buttons. */
+        var mt = document.createElement('div');
+        mt.className = 'moot';
+        mt.textContent = 'resolved elsewhere — no longer pending';
+        card.appendChild(mt);
       } else {
         var what = document.createElement('div');
         what.className = 'what';
@@ -1378,7 +1404,9 @@ and, immediately after the `m.role === 'system'` block, insert:
   /* An undecided approval is a card in the Task tab. The glyph's amber
      pending look is glyph.js reading state.pending -- this window only owns
      the decision itself. `showApprovalId` guards on the id so a 2s poll never
-     doubles the card, and the raise only fires when the id CHANGES. */
+     doubles the card, and the raise only fires when the id CHANGES. An
+     approval that leaves the state stream without a local decision is demoted
+     to a read-only "moot" record (no dead Allow/Deny buttons). */
   var showingApprovalId = null;
 
   function lastApprovalCardId() {
@@ -1393,9 +1421,14 @@ and, immediately after the `m.role === 'system'` block, insert:
   }
 
   function showApprovalId(a) {
-    if (!a) { showingApprovalId = null; return; }
+    if (!a) {
+      showingApprovalId = null;
+      markApprovalsMoot();                 /* nothing pending: demote stale cards */
+      return;
+    }
     var id = a.id;
     if (showingApprovalId === id && lastApprovalCardId() === id) return;   /* already up */
+    markApprovalsMoot();                 /* a new id supersedes any undecided older card */
     showingApprovalId = id;
     if (lastApprovalCardId() !== id) {
       push('task', 'ade', 'approval', '', { approval: a });
@@ -1404,6 +1437,23 @@ and, immediately after the `m.role === 'system'` block, insert:
     if (B) B.openChat('task');                 /* auto-raise on a NEW approval */
   }
   window.__showApproval = showApprovalId;
+
+  /* A card whose approval vanished from the state stream is "moot": it stays
+     as a persisted read-only record (the thread is an audit of what presented),
+     but its Allow/Deny buttons go away so nobody POSTs a decision against an
+     id that is no longer pending. Decided cards are never demoted. */
+  function markApprovalsMoot() {
+    var list = threads.task, changed = false;
+    for (var i = 0; i < list.length; i++) {
+      var mt = list[i];
+      if (mt && mt.meta && mt.meta.approval && !mt.meta.decided && !mt.meta.moot) {
+        mt.meta.moot = true;
+        changed = true;
+      }
+    }
+    if (changed) { renderThread(); persist(); }
+  }
+  window.__markApprovalsMoot = markApprovalsMoot;
 
   async function decide(m, allow) {
     if (!B || !m || !m.meta || !m.meta.approval || m.meta.decided) return;
@@ -1491,7 +1541,7 @@ Place it after `B.onChatFocus(...)` and before `B.shortcuts().then(...)`.
 - [ ] **Step 4: Run smoke to verify it passes**
 
 Run: `& .\node_modules\electron\dist\electron.exe . --smoke --smoke-wait=9000`
-Expected: PASS — `smsApproval.ok` true (raise + Task tab + one card + Allow/Deny buttons + decidable via `/v1/approvals/s1/decide` + decided look + no duplicate + second id re-raises), and `chatProbe.ok` (hidden at launch), `slashChat.ok`, `askChat.ok` all still true, all glyph probes unchanged/true.
+Expected: PASS — `smsApproval.ok` true (raise + Task tab + one card + Allow/Deny buttons + decidable via `/v1/approvals/s1/decide` + decided look + no duplicate + second id re-raises + stale approval demoted to a read-only "no longer pending" record + third id renders a fresh live card), and `chatProbe.ok` (hidden at launch), `slashChat.ok`, `askChat.ok` all still true, all glyph probes unchanged/true.
 
 - [ ] **Step 5: Commit**
 
