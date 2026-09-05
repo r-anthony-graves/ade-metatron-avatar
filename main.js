@@ -1361,7 +1361,7 @@ function startSmokeRun() {
       try {
         /* pollAde() keeps broadcasting approval:null to the chat window every
            2s, and handleState() demotes stale cards on that -- which would
-           rae with this probe's own __showApproval(null)/s2/s3 assertions. The
+           race with this probe's own __showApproval(null)/s2/s3 assertions. The
            probe already drives state itself and stubs the network, so pause
            the live poll during it and let the finally restore it. */
         if (timer) clearInterval(timer);
