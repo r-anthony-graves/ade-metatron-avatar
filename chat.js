@@ -800,11 +800,65 @@
             // Show progress percent
             push(activeTab, 'system', 'text', 'Progress: Tasks 1-8 complete out of 9 total. Task 9 Step 4 human hands-on pass pending.');
             handled = true;
-         } else if (cmd === 'review') {
+} else if (cmd === 'review') {
             // Show review summary
             push(activeTab, 'system', 'text', 'Review: whole-branch review recommended "Yes-with-known-tradeoffs, 0 criticals/importants." Phase 1-3 slash commands implemented. Plan amendments recorded.');
             handled = true;
-         } else if (cmd === 'memory') {
+         } else if (cmd === 'search') {
+            // Search knowledge - use /v1/ask channel
+            if (args) {
+              B.call('/v1/ask', 'POST', { question: args }).then(function (result) {
+                var answer = result && result.ok ? (result.data && result.data.answer) : 'No answer';
+                push(activeTab, 'system', 'text', 'Search result: ' + answer);
+              }).catch(function (e) {
+                push(activeTab, 'system', 'text', 'Search failed: ' + (e && e.message ? e.message : 'unknown error'));
+              });
+            } else {
+              push(activeTab, 'system', 'text', 'Usage: /search <question>');
+            }
+            handled = true;
+         } else if (cmd === 'research') {
+            // Research multi-sentence question
+            if (args) {
+              B.call('/v1/ask', 'POST', { question: args }).then(function (result) {
+                var answer = result && result.ok ? (result.data && result.data.answer) : 'No answer';
+                push(activeTab, 'system', 'text', 'Research result: ' + answer);
+              }).catch(function (e) {
+                push(activeTab, 'system', 'text', 'Research failed: ' + (e && e.message ? e.message : 'unknown error'));
+              });
+            } else {
+              push(activeTab, 'system', 'text', 'Usage: /research <question>');
+            }
+            handled = true;
+         } else if (cmd === 'summarize') {
+            // Summarize current thread
+            var list = threads.task;
+            var recent = '';
+            for (var i = 0; i < list.length && i < 10; i++) {
+              var t = list[i];
+              if (t && t.text) {
+                recent += t.text.slice(0, 50) + ' ';
+              }
+            }
+            push(activeTab, 'system', 'text', 'Summary: ' + (recent || 'no messages'));
+            handled = true;
+         } else if (cmd === 'cite') {
+            // Cite sources from recent answers
+            var list = threads.task;
+            var citations = [];
+            for (var i = 0; i < list.length && i < 5; i++) {
+              var t = list[i];
+              if (t && t.meta && t.meta.approval) {
+                citations.push('Approved: ' + t.meta.approval.id);
+              }
+            }
+            if (citations.length > 0) {
+              push(activeTab, 'system', 'text', 'Citations: ' + citations.join(', '));
+            } else {
+              push(activeTab, 'system', 'text', 'No citations found.');
+            }
+            handled = true;
+         }
             // Memory: store a fact in the persistent thread
             if (args) {
               // Store: key value
