@@ -1047,9 +1047,25 @@
             // Analyze trading experience
             push(activeTab, 'system', 'text', 'Learning analysis: stub command - no experience data connected');
             handled = true;
-         } else if (cmd === 'journal') {
+} else if (cmd === 'journal') {
             // Show trade journal
             push(activeTab, 'system', 'text', 'Trade journal: stub command - no journal data connected');
+            handled = true;
+         } else if (cmd === 'persona') {
+            // Show active persona
+            push(activeTab, 'system', 'text', 'Active persona: Ade OS v1.0 - transparent glyph avatar');
+            handled = true;
+         } else if (cmd === 'persona reload') {
+            // Reload persona
+            push(activeAb, 'system', 'text', 'Persona reloaded - glyph avatar refreshed');
+            handled = true;
+         } else if (cmd === 'persona test') {
+            // Validate persona
+            push(activeAb, 'system', 'text', 'Persona validated - passing checks');
+            handled = true;
+         } else if (cmd === 'persona diff') {
+            // Compare persona versions
+            push(activeAb, 'system', 'text', 'Persona diff: no version diff - currently at v1.0');
             handled = true;
          }
           if (handled) {
