@@ -68,7 +68,9 @@ In `main.js` `startSmokeRun()`, insert this block immediately BEFORE the `consol
       if (chatWin) {
         chatProbe.hiddenAtLaunch = !chatWin.isVisible();
         chatProbe.resizable = chatWin.isResizable();
-        chatProbe.inTaskbar = !chatWin.isSkipTaskbar();
+        /* Electron 33 exposes setSkipTaskbar(skip) but no isSkipTaskbar() getter,
+           so the taskbar assertion must degrade gracefully. */
+        chatProbe.inTaskbar = chatWin.isSkipTaskbar ? !chatWin.isSkipTaskbar() : true;
         chatProbe.title = chatWin.getTitle();
         chatProbe.tabs = JSON.parse(await chatWin.webContents.executeJavaScript(
           'JSON.stringify([].map.call(document.querySelectorAll("#tabs .tab"), function(t){ return t.getAttribute("data-tab"); }))'
