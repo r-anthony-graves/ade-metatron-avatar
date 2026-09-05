@@ -20,7 +20,7 @@
 
   var TABS = ['chat', 'shell', 'task'];
   var activeTab = 'chat';
-  var threads = { chat: [], shell: [], task: [] };
+  var threads = { chat: [], shell: [], task: [], archive: [] };
 
   /* -------------------------------------------------------- threads */
   var persistTimer = 0;
@@ -28,7 +28,8 @@
     if (persistTimer) clearTimeout(persistTimer);
     persistTimer = setTimeout(function () {
       persistTimer = 0;
-      if (B) B.threadsSave({ chat: threads.chat, shell: threads.shell, task: threads.task });
+      if (B) B.threadsSave({ chat: threads.chat, shell: threads.shell, task: threads.task,
+                             archive: threads.archive || [] });
     }, 300);          /* main debounces the actual file write again */
   }
   function push(tab, role, kind, text, meta) {
@@ -41,6 +42,20 @@
     return m;
   }
   window.__threads = function () { return threads; };
+
+  /* /clear and /compact do not destroy: the messages move here, and /restore
+     brings the newest batch back. Mirrors the cap threads-store.js enforces on
+     write, so the in-memory copy cannot disagree with the file. */
+  var MAX_ARCHIVE = 20;
+  var COMPACT_KEEP = 20;
+  function archivePush(tab, messages) {
+    if (!threads.archive) threads.archive = [];
+    threads.archive.push({ at: Date.now(), tab: tab, messages: messages });
+    if (threads.archive.length > MAX_ARCHIVE) {
+      threads.archive = threads.archive.slice(-MAX_ARCHIVE);
+    }
+  }
+  window.__archive = function () { return threads.archive || []; };
 
   function renderThread() {
     var list = threads[activeTab];
@@ -194,6 +209,71 @@
      same prefixes so speech and typing cannot drift. */
   var SKILL_VERBS = { skill: 1, skills: 1, unskill: 1 };
   var UPLOAD_VERBS = { upload: 1, uploads: 1 };
+
+  /* Every slash command the keydown chain below handles, as DATA -- the chain
+     itself is unreadable by anything but a human, which is why /help listed 5
+     of 51 and nothing could autocomplete. tests/commands-table.test.js holds
+     this equal to the chain in both directions and refuses duplicates.
+
+     `stub: true` means the branch prints a placeholder rather than doing the
+     thing. The popup says so, because a command that answers
+     "Market status: connecting to trader Ade OS..." and connects to nothing
+     reads as working. */
+  var COMMANDS = [
+    { name: 'agent', hint: 'Show active trading agents', stub: false },
+    { name: 'audit', hint: 'Audit trail', stub: true },
+    { name: 'autonomy', hint: 'Show/change autonomy level', stub: false },
+    { name: 'benchmark', hint: 'Run benchmark', stub: true },
+    { name: 'cancel', hint: 'Cancel any staged operation - reset stag', stub: false },
+    { name: 'cite', hint: 'Cite sources from recent answers', stub: false },
+    { name: 'clear', hint: 'move this tab to session memory', stub: false },
+    { name: 'compact', hint: 'keep the last 20, archive the rest', stub: false },
+    { name: 'config', hint: 'Show configuration', stub: true },
+    { name: 'context', hint: 'Show active context (last N messages + c', stub: false },
+    { name: 'db', hint: 'Database status', stub: true },
+    { name: 'decision', hint: 'Show latest decision', stub: false },
+    { name: 'dev', hint: 'Developer mode', stub: false },
+    { name: 'exit', hint: 'Evaluate exits', stub: false },
+    { name: 'forget', hint: 'Forget a stored fact (mark as moot)', stub: false },
+    { name: 'gpu', hint: 'GPU status', stub: false },
+    { name: 'health', hint: 'Health check', stub: false },
+    { name: 'help', hint: 'list these commands', stub: false },
+    { name: 'inspect', hint: 'Inspect internal state', stub: true },
+    { name: 'journal', hint: 'Show trade journal', stub: false },
+    { name: 'kill', hint: 'Emergency trading halt', stub: false },
+    { name: 'learn', hint: 'Analyze trading experience', stub: false },
+    { name: 'live', hint: 'Live trading status', stub: true },
+    { name: 'logs', hint: 'View logs', stub: true },
+    { name: 'market', hint: 'Market status', stub: true },
+    { name: 'memory', hint: 'store a fact in the task thread', stub: false },
+    { name: 'models', hint: 'Available models', stub: true },
+    { name: 'monitor', hint: 'Monitor active positions', stub: false },
+    { name: 'persona', hint: 'Show active persona', stub: false },
+    { name: 'plan', hint: 'Show plan summary', stub: false },
+    { name: 'portfolio', hint: 'Portfolio status', stub: true },
+    { name: 'positions', hint: 'Show open positions', stub: true },
+    { name: 'progress', hint: 'Show progress percent', stub: false },
+    { name: 'qvm', hint: 'QVM operations', stub: true },
+    { name: 'reason', hint: 'Explain latest decision', stub: false },
+    { name: 'recall', hint: 'list every stored fact', stub: false },
+    { name: 'remember', hint: 'look up one stored fact by key', stub: false },
+    { name: 'research', hint: 'Research multi-sentence question', stub: false },
+    { name: 'restore', hint: 'bring back the newest archived batch', stub: false },
+    { name: 'reset', hint: 'Reset session - clear threads, approvals', stub: false },
+    { name: 'review', hint: 'Show review summary', stub: false },
+    { name: 'scan', hint: 'Scan trading universe', stub: true },
+    { name: 'search', hint: 'Search knowledge - use /v1/ask channel', stub: false },
+    { name: 'services', hint: 'Service status', stub: true },
+    { name: 'sql', hint: 'Database query', stub: true },
+    { name: 'status', hint: 'window status', stub: false },
+    { name: 'steps', hint: 'Show current step list', stub: false },
+    { name: 'summarize', hint: 'Summarize current thread', stub: false },
+    { name: 'system', hint: 'System information', stub: false },
+    { name: 'task', hint: 'List open tasks', stub: false },
+    { name: 'tools', hint: 'Available tools', stub: true },
+    { name: 'trace', hint: 'Show execution trace', stub: true },
+    { name: 'watch', hint: 'Watchlist display', stub: true },
+  ];
 
   function classify(raw) {
     var v = String(raw == null ? '' : raw).trim();
@@ -752,7 +832,129 @@
       }
       return '';
     }
+    /* ---------------------------------------------- slash completions */
+    /* Open only while the COMMAND WORD is being typed: a slash, then word
+       characters, and no space yet. Once you type a space you are on
+       arguments (`/qa run the suite`) and the list gets out of the way. */
+    var cmdBox = document.getElementById('cmdlist');
+    var cmdHits = [];
+    var cmdSel = -1;
+
+    function cmdOpen() { return !cmdBox.hidden; }
+
+    function cmdHide() {
+      cmdBox.hidden = true;
+      cmdBox.textContent = '';
+      cmdHits = [];
+      cmdSel = -1;
+    }
+
+    function cmdFilter(value) {
+      /* NOT trimmed: a trailing space is the signal that the command word is
+         finished and you are on arguments now, so trimming it away kept the
+         list open over `/health `. The leading \s* still tolerates indent. */
+      var m = /^\s*\/([a-z]*)$/.exec(String(value == null ? '' : value));
+      if (!m) return null;
+      var q = m[1];
+      var out = [];
+      for (var i = 0; i < COMMANDS.length; i++) {
+        if (COMMANDS[i].name.indexOf(q) === 0) out.push(COMMANDS[i]);
+      }
+      return out;
+    }
+
+    function cmdPaint() {
+      cmdBox.textContent = '';
+      if (!cmdHits.length) {
+        var none = document.createElement('div');
+        none.className = 'cmd-none';
+        none.textContent = 'no command matches - Enter sends it as a task type';
+        cmdBox.appendChild(none);
+        return;
+      }
+      for (var i = 0; i < cmdHits.length; i++) {
+        var c = cmdHits[i];
+        var row = document.createElement('div');
+        row.className = 'cmd' + (i === cmdSel ? ' on' : '');
+        row.setAttribute('data-i', String(i));
+        var n = document.createElement('span');
+        n.className = 'cmd-name';
+        n.textContent = '/' + c.name;
+        row.appendChild(n);
+        var h = document.createElement('span');
+        h.className = 'cmd-hint';
+        h.textContent = c.hint || '';
+        row.appendChild(h);
+        if (c.stub) {
+          var s2 = document.createElement('span');
+          s2.className = 'cmd-stub';
+          s2.textContent = 'stub';
+          row.appendChild(s2);
+        }
+        cmdBox.appendChild(row);
+      }
+    }
+
+    function cmdRefresh() {
+      var hits = cmdFilter(input.value);
+      if (hits === null) { cmdHide(); return; }
+      cmdHits = hits;
+      cmdSel = hits.length ? 0 : -1;
+      cmdBox.hidden = false;
+      cmdPaint();
+    }
+
+    function cmdMove(d) {
+      if (!cmdHits.length) return;
+      cmdSel = (cmdSel + d + cmdHits.length) % cmdHits.length;
+      cmdPaint();
+      var on = cmdBox.querySelector('.cmd.on');
+      if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest' });
+    }
+
+    /* Completes the word and stops. It deliberately does NOT submit: a
+       completion popup that dispatches on Enter would fire a Task from a
+       keystroke meant to pick a name. --smoke pins that. */
+    function cmdAccept() {
+      if (cmdSel < 0 || !cmdHits[cmdSel]) return false;
+      /* Already complete: there is nothing to complete, so Enter should RUN it
+         rather than spend a keystroke re-typing the word you just typed. Close
+         the list and let the key fall through to the command chain. */
+      var typed = /^\s*\/([a-z]*)$/.exec(input.value);
+      if (typed && typed[1] === cmdHits[cmdSel].name) { cmdHide(); return false; }
+      input.value = '/' + cmdHits[cmdSel].name + ' ';
+      cmdHide();
+      input.focus();
+      return true;
+    }
+
+    cmdBox.addEventListener('mousedown', function (e) {
+      var row = e.target && e.target.closest ? e.target.closest('.cmd') : null;
+      if (!row) return;
+      e.preventDefault();                    /* keep focus in the input */
+      cmdSel = parseInt(row.getAttribute('data-i'), 10);
+      cmdAccept();
+    });
+
+    input.addEventListener('input', cmdRefresh);
+    input.addEventListener('blur', function () { setTimeout(cmdHide, 120); });
+    window.__cmdOpen = cmdOpen;
+    window.__cmdHits = function () { return cmdHits.map(function (c) { return c.name; }); };
+    window.__cmdRefresh = cmdRefresh;
+
     input.addEventListener('keydown', function (e) {
+      /* The completion list owns these keys while it is open. Escape closes
+         the list only -- without this it reaches the handler below and hides
+         the whole window, which is not what dismissing a popup should do. */
+      if (cmdOpen()) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); cmdMove(1); return; }
+        if (e.key === 'ArrowUp') { e.preventDefault(); cmdMove(-1); return; }
+        if (e.key === 'Escape') { e.preventDefault(); cmdHide(); return; }
+        if (e.key === 'Tab' || e.key === 'Enter') {
+          if (cmdAccept()) { e.preventDefault(); return; }
+          cmdHide();
+        }
+      }
       if (e.key === 'Enter') {
         var text = input.value.trim();
         // Phase 1: slash command handling
@@ -763,13 +965,67 @@
           var handled = false;
           if (cmd === 'help') {
             // Show help overlay
-            push(activeTab, 'system', 'text', 'Available commands: /help, /status, /clear, /reset, /cancel');
+            /* Built from COMMANDS, not a hand-kept sentence. The literal it
+               replaced listed 5 of 51 and had been wrong since Phase 2. */
+            var live = [], stubbed = [];
+            for (var ci = 0; ci < COMMANDS.length; ci++) {
+              (COMMANDS[ci].stub ? stubbed : live).push('/' + COMMANDS[ci].name);
+            }
+            push(activeTab, 'system', 'text',
+                 live.length + ' commands: ' + live.join(' '));
+            push(activeTab, 'system', 'text',
+                 stubbed.length + ' not implemented yet: ' + stubbed.join(' '));
             handled = true;
           } else if (cmd === 'status') {
             push(activeTab, 'system', 'text', 'System: glyph window, chat window active, orb click to open');
             handled = true;
           } else if (cmd === 'clear') {
-            input.value = '';
+            // Move this tab into session memory and empty it
+            var liveC = threads[activeTab] || [];
+            if (!liveC.length) {
+              push(activeTab, 'system', 'text', 'Nothing to clear in ' + activeTab + '.');
+            } else {
+              archivePush(activeTab, liveC.slice());
+              threads[activeTab] = [];
+              renderThread();
+              persist();
+              push(activeTab, 'system', 'text',
+                   'Cleared ' + liveC.length + ' from ' + activeTab +
+                   ' - saved to session memory. /restore brings it back.');
+            }
+            handled = true;
+          } else if (cmd === 'compact') {
+            // Keep the tail, move the rest into session memory
+            var liveK = threads[activeTab] || [];
+            if (liveK.length <= COMPACT_KEEP) {
+              push(activeTab, 'system', 'text',
+                   activeTab + ' has ' + liveK.length + ' messages - nothing to compact (keeps ' +
+                   COMPACT_KEEP + ').');
+            } else {
+              var moved = liveK.slice(0, liveK.length - COMPACT_KEEP);
+              archivePush(activeTab, moved);
+              threads[activeTab] = liveK.slice(-COMPACT_KEEP);
+              renderThread();
+              persist();
+              push(activeTab, 'system', 'text',
+                   'Compacted ' + activeTab + ': moved ' + moved.length + ' to session memory, kept ' +
+                   COMPACT_KEEP + '. /restore brings them back.');
+            }
+            handled = true;
+          } else if (cmd === 'restore') {
+            // Put the newest archived batch back where it came from
+            var arch = threads.archive || [];
+            if (!arch.length) {
+              push(activeTab, 'system', 'text', 'Session memory is empty - nothing to restore.');
+            } else {
+              var last = arch.pop();
+              var into = (TABS.indexOf(last.tab) >= 0) ? last.tab : activeTab;
+              threads[into] = (last.messages || []).concat(threads[into] || []);
+              renderThread();
+              persist();
+              push(activeTab, 'system', 'text',
+                   'Restored ' + (last.messages || []).length + ' to ' + into + '.');
+            }
             handled = true;
           } else if (cmd === 'reset') {
             // Reset session - clear threads, approvals, hide window
@@ -970,26 +1226,6 @@
             }
             var contextText = recent.join('; ');
             push(activeTab, 'system', 'text', 'Active context: ' + (recent.length > 0 ? recent.join(', ') : 'empty'));
-            handled = true;
-         } else if (cmd === 'plan') {
-            // Show plan summary
-            push(activeTab, 'system', 'text', 'Plan: 9-task migration. Tasks 1-8 complete. Task 9 verification pass pending human hands-on pass.');
-            handled = true;
-         } else if (cmd === 'task') {
-            // List open tasks
-            push(activeTab, 'system', 'text', 'Tasks: 1-threads-store, 2-chat skeleton, 3-classifier, 4-approvals, 5-voice relays, 6-orb launcher, 7-hotkey/tray, 8-drag-upload. Task 9 verification pass.');
-            handled = true;
-         } else if (cmd === 'steps') {
-            // Show current step list
-            push(activeTab, 'system', 'text', 'Steps: Task 1 threads-store, Task 2 chat window, Task 3 send pipeline, Task 4 approvals, Task 5 voice relays, Task 6 orb launcher, Task 7 hotkey/tray, Task 8 drag-upload. Task 9 verification.');
-            handled = true;
-         } else if (cmd === 'progress') {
-            // Show progress percent
-            push(activeTab, 'system', 'text', 'Progress: Tasks 1-8 complete out of 9 total. Task 9 Step 4 human hands-on pass pending.');
-            handled = true;
-} else if (cmd === 'review') {
-            // Show review summary
-            push(activeTab, 'system', 'text', 'Review: whole-branch review recommended "Yes-with-known-tradeoffs, 0 criticals/importants." Phase 1-4 slash commands implemented. Plan amendments recorded.');
             handled = true;
          } else if (cmd === 'market') {
             // Market status - stub command

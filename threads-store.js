@@ -13,8 +13,17 @@ const MAX_MESSAGES = 4000;   /* hard safety floor per tab (spec: uncapped in
                                 ballooning the file forever */
 const TABS = ['chat', 'shell', 'task'];
 
+/* /clear and /compact move messages OUT of a tab rather than destroying them:
+   Ray, 2026-09-05, "delete but saved to session memory". Each entry is
+   { at, tab, messages }. Capped because clearing is cheap and repeated: an
+   uncapped archive would grow this file without limit, which is the failure
+   MAX_MESSAGES already guards for the tabs themselves. The cap keeps the
+   NEWEST entries -- dropping what you just cleared would make the "saved to
+   session memory" message a lie. */
+const MAX_ARCHIVE = 20;
+
 function defaultThreads() {
-  return { chat: [], shell: [], task: [] };
+  return { chat: [], shell: [], task: [], archive: [] };
 }
 
 function loadThreads(file) {
@@ -32,6 +41,7 @@ function loadThreads(file) {
     const tab = TABS[i];
     if (Array.isArray(data && data[tab])) out[tab] = data[tab].slice(-MAX_MESSAGES);
   }
+  if (Array.isArray(data && data.archive)) out.archive = data.archive.slice(-MAX_ARCHIVE);
   return out;
 }
 
@@ -41,8 +51,9 @@ function saveThreads(file, data) {
     const tab = TABS[i];
     if (Array.isArray(data && data[tab])) out[tab] = data[tab].slice(-MAX_MESSAGES);
   }
+  if (Array.isArray(data && data.archive)) out.archive = data.archive.slice(-MAX_ARCHIVE);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(out, null, 2));
 }
 
-module.exports = { loadThreads, saveThreads, defaultThreads, MAX_MESSAGES };
+module.exports = { loadThreads, saveThreads, defaultThreads, MAX_MESSAGES, MAX_ARCHIVE };

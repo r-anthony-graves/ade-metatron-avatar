@@ -1262,6 +1262,101 @@ function startSmokeRun() {
         && askChat.clearsInputOnAnswer;
     } catch (e) { askChat = { error: String((e && e.message) || e) }; }
 
+    /* The slash-command completion popup. The property worth pinning is the
+       negative one: Enter while the list is open COMPLETES a word and must not
+       dispatch. A completion that fires a Task from the keystroke meant to pick
+       a name would be the same class of bug as bare text auto-dispatching,
+       which b74f5330 already had to fix once. */
+    let cmdPopup = {};
+    try {
+      const js = (s2) => chatWin.webContents.executeJavaScript(s2);
+      const set = (v) => js('(function(){ var i=document.getElementById("in");'
+        + ' i.value=' + JSON.stringify(v) + '; window.__cmdRefresh(); return window.__cmdOpen(); })()');
+
+      cmdPopup.opensOnSlash = await set('/');
+      cmdPopup.filters = JSON.parse(await js('JSON.stringify(window.__cmdHits())'))
+        .every((n) => n.indexOf('he') === 0) === false;      /* '/' shows everything */
+      await set('/he');
+      const hits = JSON.parse(await js('JSON.stringify(window.__cmdHits())'));
+      cmdPopup.filtersByPrefix = hits.length > 0 && hits.every((n) => n.indexOf('he') === 0);
+      cmdPopup.closesOnSpace = (await set('/health ')) === false;
+
+      /* Enter with the list open: completes, does not dispatch. */
+      await set('/hea');
+      const before = await js('window.__dispatchCount()');
+      await js('(function(){ var i=document.getElementById("in");'
+        + ' i.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true})); })(),0');
+      await new Promise((r) => setTimeout(r, 200));
+      cmdPopup.enterCompletes = (await js('document.getElementById("in").value')) === '/health ';
+      cmdPopup.enterDoesNotDispatch = (await js('window.__dispatchCount()')) === before;
+
+      /* Escape closes the list and leaves the window up. The window is shown
+         FIRST and the before-state recorded: asserting isVisible() at the end
+         alone fails whenever an earlier probe left the window hidden, which
+         says nothing about Escape. */
+      chatWin.show();
+      await new Promise((r) => setTimeout(r, 120));
+      cmdPopup.escapeWindowBefore = chatWin.isVisible();
+      await set('/he');
+      await js('(function(){ var i=document.getElementById("in");'
+        + ' i.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true,cancelable:true})); })(),0');
+      await new Promise((r) => setTimeout(r, 150));
+      cmdPopup.escapeClosedList = (await js('window.__cmdOpen()')) === false;
+      cmdPopup.escapeKeptWindow = chatWin.isVisible() === cmdPopup.escapeWindowBefore;
+      cmdPopup.escapeClosesListOnly = cmdPopup.escapeClosedList && cmdPopup.escapeKeptWindow;
+      await js('(function(){ document.getElementById("in").value=""; window.__cmdRefresh(); })(),0');
+
+      cmdPopup.ok = cmdPopup.opensOnSlash === true
+        && cmdPopup.filtersByPrefix === true
+        && cmdPopup.closesOnSpace === true
+        && cmdPopup.enterCompletes === true
+        && cmdPopup.enterDoesNotDispatch === true
+        && cmdPopup.escapeClosesListOnly === true;
+    } catch (e) { cmdPopup = { error: String((e && e.message) || e) }; }
+
+    /* /clear and /compact MOVE messages into session memory. The assertion that
+       matters is conservation: the tab loses exactly what the archive gains, so
+       a "saved to session memory" message cannot be a claim about data that was
+       actually destroyed. */
+    let clearArchive = {};
+    try {
+      const js = (s2) => chatWin.webContents.executeJavaScript(s2);
+      const enter = (v) => js('(function(){ var i=document.getElementById("in");'
+        + ' i.value=' + JSON.stringify(v) + ';'
+        + ' i.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));'
+        + ' })(),0');
+
+      await js('(function(){ window.__setTab("chat"); var t = window.__threads();'
+        + ' t.chat.push({id:"sm1",role:"user",kind:"text",text:"one",meta:{}},'
+        + '             {id:"sm2",role:"user",kind:"text",text:"two",meta:{}}); })(),0');
+      const before = JSON.parse(await js(
+        'JSON.stringify({tab: window.__threads().chat.length, arch: window.__archive().length})'));
+
+      await enter('/clear');
+      await new Promise((r) => setTimeout(r, 300));
+      const after = JSON.parse(await js(
+        'JSON.stringify({tab: window.__threads().chat.length, arch: window.__archive().length,'
+        + ' moved: (window.__archive().slice(-1)[0] || {messages:[]}).messages.length})'));
+
+      clearArchive.archiveGrew = after.arch === before.arch + 1;
+      clearArchive.movedEverything = after.moved === before.tab;
+      /* the tab holds only the report line clear() pushes afterwards */
+      clearArchive.tabEmptied = after.tab === 1;
+      clearArchive.nothingDestroyed = after.moved === before.tab;
+
+      /* /restore puts it back where it came from */
+      await enter('/restore');
+      await new Promise((r) => setTimeout(r, 300));
+      const back = JSON.parse(await js(
+        'JSON.stringify({tab: window.__threads().chat.length, arch: window.__archive().length})'));
+      clearArchive.restoreReturnsThem = back.tab >= before.tab;
+      clearArchive.restorePopsArchive = back.arch === before.arch;
+
+      clearArchive.ok = clearArchive.archiveGrew && clearArchive.movedEverything
+        && clearArchive.tabEmptied && clearArchive.restoreReturnsThem
+        && clearArchive.restorePopsArchive;
+    } catch (e) { clearArchive = { error: String((e && e.message) || e) }; }
+
     /* Retry on failure (spec Error handling): a failed call stages the ORIGINAL
        line back into the input so Enter is the retry action. */
     let retryChat = {};
@@ -1416,6 +1511,8 @@ function startSmokeRun() {
       chatProbe,
       slashChat,
       askChat,
+      cmdPopup,
+      clearArchive,
       retryChat,
       smsApproval,
       dropChat,
