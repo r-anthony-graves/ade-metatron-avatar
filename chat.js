@@ -51,9 +51,48 @@
   function renderMsg(m) {
     var wrap = document.createElement('div');
     wrap.className = 'msg ' + m.role;
+    wrap.setAttribute('data-id', m.id);
     if (m.role === 'system') {
       wrap.className = 'sys';
       wrap.textContent = m.text;
+      return wrap;
+    }
+    if (m.kind === 'approval') {
+      wrap.className = 'msg ade approval';
+      var card = document.createElement('div');
+      card.className = 'approval';
+      var appr = (m.meta && m.meta.approval) || {};
+      if (m.meta && m.meta.decided) {
+        var d = document.createElement('div');
+        d.className = 'decision';
+        d.textContent = m.meta.decided === 'allow' ? 'Allowed ' + (appr.id || '')
+                      : m.meta.decided === 'deny' ? 'Denied ' + (appr.id || '')
+                      : m.meta.decided;
+        card.appendChild(d);
+      } else {
+        var what = document.createElement('div');
+        what.className = 'what';
+        what.textContent = appr.tool || 'approval';
+        card.appendChild(what);
+        if (appr.args != null) {
+          var args = document.createElement('pre');
+          args.className = 'args';
+          var argText;
+          try { argText = JSON.stringify(appr.args, null, 1); } catch (e) { argText = String(appr.args); }
+          args.textContent = argText;
+          card.appendChild(args);
+        }
+        var row = document.createElement('div');
+        row.className = 'decide-row';
+        var allow = document.createElement('button');
+        allow.type = 'button'; allow.className = 'approve'; allow.textContent = 'Allow';
+        var deny = document.createElement('button');
+        deny.type = 'button'; deny.className = 'deny'; deny.textContent = 'Deny';
+        row.appendChild(allow);
+        row.appendChild(deny);
+        card.appendChild(row);
+      }
+      wrap.appendChild(card);
       return wrap;
     }
     var b = document.createElement('div');
@@ -435,6 +474,83 @@
   }
   window.__handleUpload = handleUpload;
 
+  /* ---------------------------------------------------------- approvals */
+  /* An undecided approval is a card in the Task tab. The glyph's amber
+     pending look is glyph.js reading state.pending -- this window only owns
+     the decision itself. `showApprovalId` guards on the id so a 2s poll never
+     doubles the card, and the raise only fires when the id CHANGES. */
+  var showingApprovalId = null;
+
+  function lastApprovalCardId() {
+    var list = threads.task;
+    for (var i = list.length - 1; i >= 0; i--) {
+      if (list[i].role === 'ade' && list[i].kind === 'approval'
+          && list[i].meta && list[i].meta.approval) {
+        return list[i].meta.approval.id;
+      }
+    }
+    return null;
+  }
+
+  function showApprovalId(a) {
+    if (!a) { showingApprovalId = null; return; }
+    var id = a.id;
+    if (showingApprovalId === id && lastApprovalCardId() === id) return;   /* already up */
+    showingApprovalId = id;
+    if (lastApprovalCardId() !== id) {
+      push('task', 'ade', 'approval', '', { approval: a });
+    }
+    setTab('task');
+    if (B) B.openChat('task');                 /* auto-raise on a NEW approval */
+  }
+  window.__showApproval = showApprovalId;
+
+  async function decide(m, allow) {
+    if (!B || !m || !m.meta || !m.meta.approval || m.meta.decided) return;
+    var id = m.meta.approval.id;
+    m.meta.decided = allow ? 'allow' : 'deny';
+    renderThread();
+    var r = await B.call('/v1/approvals/' + encodeURIComponent(id) + '/decide', 'POST', {
+      allow: allow,
+      reason: allow ? 'allowed from the desktop avatar' : 'denied from the desktop avatar',
+      decided_by: 'human'
+    });
+    /* the result bubble carries the decision into the thread and is persisted
+       with it -- the card keeps its decided look when the window re-polls */
+    push('task', 'ade', r && r.ok ? 'text' : 'error',
+      r && r.ok ? (allow ? 'Allowed ' + id : 'Denied ' + id)
+                : 'Could not decide ' + id + ': ' + ((r && (r.error || r.status)) || '?'));
+  }
+  window.__decide = decide;
+
+  /* One click handler for every card, now and later: a decision mutates the
+     message's meta so re-render and persist stay in step. */
+  threadEl.addEventListener('click', function (e) {
+    var btn = e.target;
+    if (!btn || !btn.classList
+        || !(btn.classList.contains('approve') || btn.classList.contains('deny'))
+        || !btn.closest) return;
+    var wrap = e.target.closest('.msg');
+    if (!wrap) return;
+    var id = wrap.getAttribute('data-id');
+    for (var t = 0; t < TABS.length; t++) {
+      var list = threads[TABS[t]];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].id === id) { void decide(list[i], btn.classList.contains('approve')); return; }
+      }
+    }
+  });
+
+  /* The state stream drives header AND approvals from one place. Arriving
+     approvals raise the window; the same id on a later poll is a no-op. */
+  function handleState(s) {
+    if (!s) return;
+    state = s;
+    paintState();
+    showApprovalId(s.approval);
+  }
+  window.__handleState = handleState;
+
   /* ------------------------------------------------------------ boot */
   function boot() {
     if (!B) return;
@@ -463,11 +579,26 @@
       window.__threadsLoaded = true;
       renderThread();
     });
-    B.onState(function (s) { if (s) { state = s; paintState(); } });
+    B.onState(handleState);
     B.onChatFocus(function (tab) {
       if (tab && TABS.indexOf(tab) >= 0) setTab(tab);
       renderThread();
       focusInput();
+    });
+    /* An approval already waiting at boot is "shown" already: render its card
+       without raising, so the glyph's amber is the beacon and opening is the
+       user's move. Later ids still raise. */
+    B.state().then(function (s) {
+      if (s) {
+        state = s;
+        paintState();
+        if (s.approval) {
+          showingApprovalId = s.approval.id;
+          if (lastApprovalCardId() !== s.approval.id) {
+            push('task', 'ade', 'approval', '', { approval: s.approval });
+          }
+        }
+      }
     });
     B.shortcuts().then(function (k) {
       var el = document.getElementById('talkKey');

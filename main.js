@@ -1342,6 +1342,69 @@ function startSmokeRun() {
       retryChat.ok = retryChat.bubble && retryChat.staged && retryChat.resent;
     } catch (e) { retryChat = { error: String((e && e.message) || e) }; }
 
+    /* Approvals moved into the chat window with the bar. A new undecided
+       approval appends a card into the Task tab and RAISES the window (the
+       orb's amber pending look is glyph.js reading state.pending and does not
+       move); Allow/Deny posts /v1/approvals/<id>/decide and marks the card;
+       the same id never double-appends. Driven renderer-side so the probe owes
+       the network nothing -- pollAde()'s arrival only decides WHICH id, the
+       card logic is here. */
+    let smsApproval = {};
+    try {
+      const js = (s) => chatWin.webContents.executeJavaScript(s);
+      const posted = [];
+      ipcMain.removeHandler('ade:call');
+      ipcMain.handle('ade:call', async (_e, pathname, method, body) => {
+        posted.push({ pathname, method, body });
+        return { ok: true, status: 200, data: { ok: true } };
+      });
+      try {
+        await js('window.__showApproval({ id: "s1", tool: "fs.write_file", args: { path: "C:\\\\tmp\\\\note.txt", mode: "w" } }),0');
+        await new Promise((r) => setTimeout(r, 160));   /* chat:open round trip */
+        smsApproval.raised = chatWin.isVisible();
+        smsApproval.tab = await js('window.__activeTab()');
+        smsApproval.cards = await js('document.querySelectorAll("#thread .msg.approval").length');
+        smsApproval.namesTool = (await js('document.getElementById("thread").textContent')).indexOf('fs.write_file') >= 0;
+        smsApproval.buttons = await js('document.querySelectorAll("#thread button.approve, #thread button.deny").length');
+
+        await js('(function(){ var b=document.querySelector("#thread button.deny");' +
+                 ' b.dispatchEvent(new MouseEvent("click",{bubbles:true})); })(),0');
+        await new Promise((r) => setTimeout(r, 160));
+        const decidePost = posted.find((p) => p.pathname === '/v1/approvals/s1/decide');
+        smsApproval.decidePosted = !!decidePost && decidePost.method === 'POST'
+          && decidePost.body && decidePost.body.allow === false
+          && decidePost.body.decided_by === 'human';
+        smsApproval.buttonsAfterDecide = await js('document.querySelectorAll("#thread button.approve, #thread button.deny").length');
+        smsApproval.decidedText = (await js('document.getElementById("thread").textContent')).indexOf('Denied s1') >= 0;
+
+        await js('window.__showApproval({ id: "s1", tool: "fs.write_file", args: { path: "x" } }),0');
+        await new Promise((r) => setTimeout(r, 60));
+        smsApproval.noDupe = (await js('document.querySelectorAll("#thread .msg.approval").length')) === 1;
+
+        await js('window.__showApproval({ id: "s2", tool: "shell.exec", args: { cmd: "whoami" } }),0');
+        await new Promise((r) => setTimeout(r, 160));
+        smsApproval.secondCard = (await js('document.querySelectorAll("#thread .msg.approval").length')) === 2;
+
+        smsApproval.ok = smsApproval.raised === true
+          && smsApproval.tab === 'task'
+          && smsApproval.cards === 1
+          && smsApproval.namesTool === true
+          && smsApproval.buttons === 2
+          && smsApproval.decidePosted === true
+          && smsApproval.buttonsAfterDecide === 0
+          && smsApproval.decidedText === true
+          && smsApproval.noDupe === true
+          && smsApproval.secondCard === true;
+      } finally {
+        await js('window.adeBridge.hideChat(),0').catch(() => {});
+        await js('(function(){ var w = window.__threads();' +
+                 ' w.task = w.task.filter(function(m){ return !(m.kind === "approval" && m.meta && /^s[12]$/.test(m.meta.approval && m.meta.approval.id)); });' +
+                 ' window.adeBridge.threadsSave({ chat: w.chat, shell: w.shell, task: w.task }),0; })(),0').catch(() => {});
+        ipcMain.removeHandler('ade:call');
+        ipcMain.handle('ade:call', handleAdeCall);
+      }
+    } catch (e) { smsApproval = { error: String((e && e.message) || e) }; }
+
     console.log('SMOKE ' + JSON.stringify({
       shortcuts,
       visible: win.isVisible(),
@@ -1349,6 +1412,7 @@ function startSmokeRun() {
       slashChat,
       askChat,
       retryChat,
+      smsApproval,
       bounds: win.getBounds(),
       workArea: screen.getDisplayMatching(win.getBounds()).workArea,
       tray: !!tray,

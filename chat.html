@@ -71,6 +71,19 @@
   #hint b { color:var(--steel); }
   body.dropping { outline:2px dashed rgba(88,166,255,.55); outline-offset:-4px; }
   .spin { color:#b3540f; }
+  .msg.approval .approval { display:inline-block; max-width:78%; border:1px solid var(--line);
+                            background:#fff8ea; border-radius:8px; padding:8px 10px;
+                            font:400 12px/1.4 "Segoe UI",system-ui,sans-serif; }
+  .msg.approval .what { font-weight:600; color:#4a3b04; font-family:"Cascadia Mono","Consolas",ui-monospace,monospace; font-size:11px; }
+  .msg.approval .args { margin:5px 0 0; padding:6px 8px; background:rgba(110,118,129,.08);
+                        border:1px solid rgba(110,118,129,.25); border-radius:5px;
+                        white-space:pre-wrap; word-break:break-all; font:400 10.5px/1.4 "Consolas",monospace; }
+  .msg.approval .decide-row { margin-top:7px; display:flex; gap:6px; }
+  .msg.approval button { font:600 10.5px/1 "Segoe UI",sans-serif; letter-spacing:.08em;
+                         text-transform:uppercase; border-radius:4px; padding:5px 14px; cursor:pointer; }
+  .msg.approval button.approve { color:#fff; background:#6e9a35; border:1px solid #5c8129; }
+  .msg.approval button.deny { color:var(--red); background:#fff; border:1px solid #d5aab0; }
+  .msg.approval .decision { padding:2px 0; font-weight:600; color:#6e9a35; }
   @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
 </style>
 </head>
