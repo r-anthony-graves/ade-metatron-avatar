@@ -548,7 +548,7 @@ if (!app.requestSingleInstanceLock()) {
       ['chat', ['Control+Alt+A', 'Control+Shift+A', 'Control+Alt+G'], () => {
         /* open/focus, or hide when it already has focus -- the bar's old
            toggle behaviour, moved to a window that can be hidden. */
-        if (chatWin && chatWin.isVisible() && chatWin.isFocused()) chatWin.hide();
+        if (chatWin && chatWin.isVisible() && chatWin.isFocused()) { flushThreads(); chatWin.hide(); }
         else openChat();
       }],
       ['talk', ['Control+Alt+Space', 'Control+Shift+Space', 'Control+Alt+V'],
