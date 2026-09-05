@@ -319,6 +319,7 @@ function createWindow() {
     const [nx, ny] = win.getPosition();
     cfg.x = nx; cfg.y = ny; saveCfg();
   });
+  win.on('close', () => { win = null; });
   win.on('closed', () => { win = null; });
 }
 
