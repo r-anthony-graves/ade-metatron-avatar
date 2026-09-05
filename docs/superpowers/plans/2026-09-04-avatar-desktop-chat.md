@@ -2692,32 +2692,37 @@ In `startSmokeRun()`, add a `dropChat` probe after the `smsApproval` block. It s
 ```js
       let dropChat = {};
       try {
-        await js('window.adeBridge.openChat(),0');
+        /* NOTE: `js` is a const scoped inside the smsApproval try block and
+           out of scope here, so the probe inlines executeJavaScript. */
+        await chatWin.webContents.executeJavaScript('window.adeBridge.openChat(),0');
         await new Promise((r) => setTimeout(r, 160));   /* chat:open round trip */
-        await js('(function(){ var dt = new DataTransfer();' +
-                 ' dt.items.add(new File(["x"], "fake.txt"));' +
-                 ' window.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));' +
-                 ' void 0; })()');
+        await chatWin.webContents.executeJavaScript(
+          '(function(){ var dt = new DataTransfer();' +
+          ' dt.items.add(new File(["x"], "fake.txt"));' +
+          ' window.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));' +
+          ' void 0; })()');
         await new Promise((r) => setTimeout(r, 40));
-        dropChat.overlayOn = await js('document.body.classList.contains("dropping")');
-        await js('(function(){ var dt = new DataTransfer();' +
-                 ' dt.items.add(new File(["x"], "fake.txt"));' +
-                 ' window.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));' +
-                 ' void 0; })()');
+        dropChat.overlayOn = await chatWin.webContents.executeJavaScript('document.body.classList.contains("dropping")');
+        await chatWin.webContents.executeJavaScript(
+          '(function(){ var dt = new DataTransfer();' +
+          ' dt.items.add(new File(["x"], "fake.txt"));' +
+          ' window.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));' +
+          ' void 0; })()');
         await new Promise((r) => setTimeout(r, 120));
-        dropChat.overlayOff = !(await js('document.body.classList.contains("dropping")'));
-        dropChat.nothingSelected = (await js('document.getElementById("thread").textContent'))
+        dropChat.overlayOff = !(await chatWin.webContents.executeJavaScript('document.body.classList.contains("dropping")'));
+        dropChat.nothingSelected = (await chatWin.webContents.executeJavaScript('document.getElementById("thread").textContent'))
           .indexOf('Nothing droppable there.') >= 0;
         dropChat.ok = dropChat.overlayOn === true
           && dropChat.overlayOff === true
           && dropChat.nothingSelected === true;
       } finally {
-        await js('window.adeBridge.hideChat(),0').catch(() => {});
-        await js('(function(){ var w = window.__threads();' +
-                 ' for (var t in w) w[t] = (w[t] || []).filter(function(m){' +
-                 ' return m.text !== "Nothing droppable there. Use /upload to pick files, or /upload folder for a directory."' +
-                 ' && m.text !== "…uploading"; });' +
-                 ' window.adeBridge.threadsSave(w),0; })(),0').catch(() => {});
+        await chatWin.webContents.executeJavaScript('window.adeBridge.hideChat(),0').catch(() => {});
+        await chatWin.webContents.executeJavaScript(
+          '(function(){ var w = window.__threads();' +
+          ' for (var t in w) w[t] = (w[t] || []).filter(function(m){' +
+          ' return m.text !== "Nothing droppable there. Use /upload to pick files, or /upload folder for a directory."' +
+          ' && m.text !== "…uploading"; });' +
+          ' window.adeBridge.threadsSave(w),0; })(),0').catch(() => {});
       }
     } catch (e) { dropChat = { error: String((e && e.message) || e) }; }
 ```
