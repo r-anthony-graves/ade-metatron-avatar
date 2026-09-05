@@ -69,6 +69,13 @@
                       : m.meta.decided === 'deny' ? 'Denied ' + (appr.id || '')
                       : m.meta.decided;
         card.appendChild(d);
+      } else if (m.meta && m.meta.moot) {
+        /* The approval vanished from the state stream (resolved elsewhere):
+           keep the card as a persisted read-only record, but no dead buttons. */
+        var mt = document.createElement('div');
+        mt.className = 'moot';
+        mt.textContent = 'resolved elsewhere — no longer pending';
+        card.appendChild(mt);
       } else {
         var what = document.createElement('div');
         what.className = 'what';
@@ -478,7 +485,9 @@
   /* An undecided approval is a card in the Task tab. The glyph's amber
      pending look is glyph.js reading state.pending -- this window only owns
      the decision itself. `showApprovalId` guards on the id so a 2s poll never
-     doubles the card, and the raise only fires when the id CHANGES. */
+     doubles the card, and the raise only fires when the id CHANGES. An
+     approval that leaves the state stream without a local decision is demoted
+     to a read-only "moot" record (no dead Allow/Deny buttons). */
   var showingApprovalId = null;
 
   function lastApprovalCardId() {
@@ -493,9 +502,14 @@
   }
 
   function showApprovalId(a) {
-    if (!a) { showingApprovalId = null; return; }
+    if (!a) {
+      showingApprovalId = null;
+      markApprovalsMoot();                 /* nothing pending: demote stale cards */
+      return;
+    }
     var id = a.id;
     if (showingApprovalId === id && lastApprovalCardId() === id) return;   /* already up */
+    markApprovalsMoot();                 /* a new id supersedes any undecided older card */
     showingApprovalId = id;
     if (lastApprovalCardId() !== id) {
       push('task', 'ade', 'approval', '', { approval: a });
@@ -504,6 +518,23 @@
     if (B) B.openChat('task');                 /* auto-raise on a NEW approval */
   }
   window.__showApproval = showApprovalId;
+
+  /* A card whose approval vanished from the state stream is "moot": it stays
+     as a persisted read-only record (the thread is an audit of what presented),
+     but its Allow/Deny buttons go away so nobody POSTs a decision against an
+     id that is no longer pending. Decided cards are never demoted. */
+  function markApprovalsMoot() {
+    var list = threads.task, changed = false;
+    for (var i = 0; i < list.length; i++) {
+      var mt = list[i];
+      if (mt && mt.meta && mt.meta.approval && !mt.meta.decided && !mt.meta.moot) {
+        mt.meta.moot = true;
+        changed = true;
+      }
+    }
+    if (changed) { renderThread(); persist(); }
+  }
+  window.__markApprovalsMoot = markApprovalsMoot;
 
   async function decide(m, allow) {
     if (!B || !m || !m.meta || !m.meta.approval || m.meta.decided) return;

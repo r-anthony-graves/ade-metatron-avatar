@@ -1359,6 +1359,12 @@ function startSmokeRun() {
         return { ok: true, status: 200, data: { ok: true } };
       });
       try {
+        /* pollAde() keeps broadcasting approval:null to the chat window every
+           2s, and handleState() demotes stale cards on that -- which would
+           rae with this probe's own __showApproval(null)/s2/s3 assertions. The
+           probe already drives state itself and stubs the network, so pause
+           the live poll during it and let the finally restore it. */
+        if (timer) clearInterval(timer);
         await js('window.__showApproval({ id: "s1", tool: "fs.write_file", args: { path: "C:\\\\tmp\\\\note.txt", mode: "w" } }),0');
         await new Promise((r) => setTimeout(r, 160));   /* chat:open round trip */
         smsApproval.raised = chatWin.isVisible();
@@ -1384,6 +1390,18 @@ function startSmokeRun() {
         await js('window.__showApproval({ id: "s2", tool: "shell.exec", args: { cmd: "whoami" } }),0');
         await new Promise((r) => setTimeout(r, 160));
         smsApproval.secondCard = (await js('document.querySelectorAll("#thread .msg.approval").length')) === 2;
+        smsApproval.secondButtons = await js('document.querySelectorAll("#thread button.approve, #thread button.deny").length');
+
+        await js('window.__showApproval(null),0');       /* resolved server-side */
+        await new Promise((r) => setTimeout(r, 60));
+        smsApproval.mootButtons = await js('document.querySelectorAll("#thread button.approve, #thread button.deny").length');
+        smsApproval.mootText = (await js('document.getElementById("thread").textContent')).indexOf('no longer pending') >= 0;
+        smsApproval.mootKeepsCards = (await js('document.querySelectorAll("#thread .msg.approval").length')) === 2;
+
+        await js('window.__showApproval({ id: "s3", tool: "git.status", args: {} }),0');
+        await new Promise((r) => setTimeout(r, 160));
+        smsApproval.thirdCard = (await js('document.querySelectorAll("#thread .msg.approval").length')) === 3;
+        smsApproval.thirdButtons = await js('document.querySelectorAll("#thread button.approve, #thread button.deny").length');
 
         smsApproval.ok = smsApproval.raised === true
           && smsApproval.tab === 'task'
@@ -1394,14 +1412,21 @@ function startSmokeRun() {
           && smsApproval.buttonsAfterDecide === 0
           && smsApproval.decidedText === true
           && smsApproval.noDupe === true
-          && smsApproval.secondCard === true;
+          && smsApproval.secondCard === true
+          && smsApproval.secondButtons === 2
+          && smsApproval.mootButtons === 0
+          && smsApproval.mootText === true
+          && smsApproval.mootKeepsCards === true
+          && smsApproval.thirdCard === true
+          && smsApproval.thirdButtons === 2;
       } finally {
         await js('window.adeBridge.hideChat(),0').catch(() => {});
         await js('(function(){ var w = window.__threads();' +
-                 ' w.task = w.task.filter(function(m){ return !(m.kind === "approval" && m.meta && /^s[12]$/.test(m.meta.approval && m.meta.approval.id)); });' +
+                 ' w.task = w.task.filter(function(m){ return !(m.kind === "approval" && m.meta && /^s[123]$/.test(m.meta.approval && m.meta.approval.id)); });' +
                  ' window.adeBridge.threadsSave({ chat: w.chat, shell: w.shell, task: w.task }),0; })(),0').catch(() => {});
         ipcMain.removeHandler('ade:call');
         ipcMain.handle('ade:call', handleAdeCall);
+        timer = setInterval(pollAde, 2000);
       }
     } catch (e) { smsApproval = { error: String((e && e.message) || e) }; }
 
