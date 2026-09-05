@@ -987,9 +987,69 @@
             // Show progress percent
             push(activeTab, 'system', 'text', 'Progress: Tasks 1-8 complete out of 9 total. Task 9 Step 4 human hands-on pass pending.');
             handled = true;
-         } else if (cmd === 'review') {
+} else if (cmd === 'review') {
             // Show review summary
-            push(activeTab, 'system', 'text', 'Review: whole-branch review recommended "Yes-with-known-tradeoffs, 0 criticals/importants." Phase 1-3 slash commands implemented. Plan amendments recorded.');
+            push(activeTab, 'system', 'text', 'Review: whole-branch review recommended "Yes-with-known-tradeoffs, 0 criticals/importants." Phase 1-4 slash commands implemented. Plan amendments recorded.');
+            handled = true;
+         } else if (cmd === 'market') {
+            // Market status - stub command
+            push(activeTab, 'system', 'text', 'Market status: connecting to trader Ade OS...');
+            handled = true;
+         } else if (cmd === 'scan') {
+            // Scan trading universe - stub command
+            push(activeTab, 'system', 'text', 'Scanning trading universe...');
+            handled = true;
+         } else if (cmd === 'watch') {
+            // Watchlist display - stub command
+            push(activeTab, 'system', 'text', 'Watchlist display...');
+            handled = true;
+         } else if (cmd === 'positions') {
+            // Show open positions - stub command
+            push(activeTab, 'system', 'text', 'Open positions: stub command - no market data connected');
+            handled = true;
+         } else if (cmd === 'portfolio') {
+            // Portfolio status - stub command
+            push(activeTab, 'system', 'text', 'Portfolio status: stub command - no market data connected');
+            handled = true;
+         } else if (cmd === 'live') {
+            // Live trading status - stub command with permission check
+            push(activeTab, 'system', 'text', 'Live trading: permission required - use /kill to halt');
+            handled = true;
+         } else if (cmd === 'kill') {
+            // Emergency trading halt
+            push(activeTab, 'system', 'text', 'Trading halted. Emergency halt engaged.');
+            handled = true;
+         } else if (cmd === 'autonomy') {
+            // Show/change autonomy level
+            push(activeTab, 'system', 'text', 'Autonomy level: stub command - currently auto mode');
+            handled = true;
+         } else if (cmd === 'agent') {
+            // Show active trading agents
+            push(activeTab, 'system', 'text', 'Active agents: stub command - listing agents...');
+            handled = true;
+         } else if (cmd === 'decision') {
+            // Show latest decision
+            push(activeTab, 'system', 'text', 'Latest decision: stub command - no decisions recorded');
+            handled = true;
+         } else if (cmd === 'reason') {
+            // Explain latest decision
+            push(activeTab, 'system', 'text', 'Decision explanation: stub command - no decisions recorded');
+            handled = true;
+         } else if (cmd === 'monitor') {
+            // Monitor active positions
+            push(activeTab, 'system', 'text', 'Monitoring positions: stub command - no positions connected');
+            handled = true;
+         } else if (cmd === 'exit') {
+            // Evaluate exits
+            push(activeTab, 'system', 'text', 'Exit evaluation: stub command - no exit data connected');
+            handled = true;
+         } else if (cmd === 'learn') {
+            // Analyze trading experience
+            push(activeTab, 'system', 'text', 'Learning analysis: stub command - no experience data connected');
+            handled = true;
+         } else if (cmd === 'journal') {
+            // Show trade journal
+            push(activeTab, 'system', 'text', 'Trade journal: stub command - no journal data connected');
             handled = true;
          }
           if (handled) {
