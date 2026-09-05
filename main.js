@@ -1251,10 +1251,104 @@ function startSmokeRun() {
         && chatProbe.bridgeRoundTrip === 'smoke';
     } catch (e) { chatProbe = { error: String((e && e.message) || e) }; }
 
+    /* The single classifier lives in the chat window now. Same contracts the
+       bar's probes protected, asserted against the REAL functions. */
+    let slashChat = {};
+    try {
+      const js = (s) => chatWin.webContents.executeJavaScript(s);
+      slashChat.skillVerb = await js('JSON.stringify(window.__classify("/skill"))');
+      slashChat.skillNamed = await js('JSON.stringify(window.__classify("/skill brainstorming"))');
+      slashChat.typeKeepsWord = await js('window.__classify("/superpowers").type');
+      slashChat.typeWithBody = await js('window.__classify("/qa run the suite").text');
+      slashChat.plainAsksNow = JSON.parse(await js('JSON.stringify(window.__classify("fix the build"))'));
+      slashChat.route = JSON.parse(await js(
+        'JSON.stringify((function(){ window.__setTab("task"); var t = window.__routePlain("run it");' +
+        ' window.__setTab("chat"); var c = window.__routePlain("what is here");' +
+        ' var s = window.__routePlain("!git status");' +
+        ' return { shell: s, taskPlain: t, chatPlain: c }; })())'));
+      slashChat.routeOk = slashChat.route.shell.kind === 'shell'
+        && slashChat.route.taskPlain.kind === 'task' && slashChat.route.taskPlain.type === 'coding'
+        && slashChat.route.chatPlain.kind === 'ask' && slashChat.route.chatPlain.route === 'ground';
+      slashChat.ok = JSON.parse(slashChat.skillVerb).kind === 'skill'
+        && JSON.parse(slashChat.skillNamed).text === 'brainstorming'
+        && slashChat.typeKeepsWord === 'superpowers'
+        && slashChat.typeWithBody === 'run the suite'
+        && slashChat.plainAsksNow.kind === 'ask'
+        && slashChat.plainAsksNow.route === 'ground'
+        && slashChat.routeOk === true;
+    } catch (e) { slashChat = { error: String((e && e.message) || e) }; }
+
+    /* Ask contracts on the new surface: escalation stages a Task in the chat
+       window's input and NEVER dispatches; a grounded answer clears it. */
+    let askChat = {};
+    try {
+      const js = (s) => chatWin.webContents.executeJavaScript(s);
+      const bareRoute = JSON.parse(await js('JSON.stringify(window.__classify("what is in glyph.js"))'));
+      const taskRoute = JSON.parse(await js('JSON.stringify(window.__classify("/qa run the suite"))'));
+      const shellRoute = JSON.parse(await js('JSON.stringify(window.__classify("!git status"))'));
+      const chatRoute = JSON.parse(await js('JSON.stringify(window.__classify("?what brain are you on"))'));
+      askChat.bareInputAsks = bareRoute.kind === 'ask' && bareRoute.route === 'ground';
+      askChat.prefixStillDispatches = taskRoute.kind === 'task' && taskRoute.type === 'qa';
+      askChat.shellUnchanged = shellRoute.kind === 'shell';
+      askChat.explicitAskUnchanged = chatRoute.kind === 'ask' && chatRoute.route === 'chat';
+
+      const before = await js('window.__dispatchCount()');
+      await js('window.__applyAskResult({ answer: "", escalate: { task_type: "coding", prompt: "fix it" } })');
+      const after = await js('window.__dispatchCount()');
+      askChat.escalationDoesNotDispatch = after === before;
+      askChat.escalationStagesTask = await js('document.getElementById("in").value') === '/coding fix it';
+
+      const namedRootOut = await js(
+        '(function(){ window.__setTab("chat");' +
+        ' window.__applyAskResult({ answer: "", escalate: { task_type: "coding", prompt: "fix it", root: "D:\\\\tradinglocal" } });' +
+        ' return document.getElementById("thread").textContent; })()');
+      askChat.escalationNamesRoot = namedRootOut.indexOf('D:\\tradinglocal') >= 0;
+
+      const answered = await js(
+        '(function(){ document.getElementById("in").value = "leftover";' +
+        ' window.__applyAskResult({ answer: "glyph.js draws the core.", roots_cited: ["ade-ai"] });' +
+        ' return document.getElementById("in").value; })()');
+      askChat.clearsInputOnAnswer = answered === '';
+
+      askChat.ok = askChat.bareInputAsks && askChat.prefixStillDispatches
+        && askChat.shellUnchanged && askChat.explicitAskUnchanged
+        && askChat.escalationDoesNotDispatch === true
+        && askChat.escalationStagesTask && askChat.escalationNamesRoot
+        && askChat.clearsInputOnAnswer;
+    } catch (e) { askChat = { error: String((e && e.message) || e) }; }
+
+    /* Retry on failure (spec Error handling): a failed call stages the ORIGINAL
+       line back into the input so Enter is the retry action. */
+    let retryChat = {};
+    try {
+      const js = (s) => chatWin.webContents.executeJavaScript(s);
+      ipcMain.removeHandler('ade:call');
+      ipcMain.handle('ade:call', async (_e, pathname, method, body) => {
+        retryChat.posted = { pathname, method, body };
+        return { ok: false, status: 503, error: 'test outage' };
+      });
+      await js('window.__setTab("chat"); window.__send("?what brain are you on"),0');
+      await new Promise((r) => setTimeout(r, 120));
+      retryChat.bubble = (await js('document.getElementById("thread").textContent'))
+        .indexOf('test outage') >= 0;
+      retryChat.staged = (await js('document.getElementById("in").value'))
+        .indexOf('?what brain are you on') >= 0;
+      await js('window.__send(),0');   /* the staged line is still in the input */
+      await new Promise((r) => setTimeout(r, 120));
+      retryChat.resent = !!(retryChat.posted
+        && retryChat.posted.method === 'POST'
+        && retryChat.posted.pathname === '/v1/chat/completions'
+        && retryChat.posted.body.messages[0].content === 'what brain are you on');
+      retryChat.ok = retryChat.bubble && retryChat.staged && retryChat.resent;
+    } catch (e) { retryChat = { error: String((e && e.message) || e) }; }
+
     console.log('SMOKE ' + JSON.stringify({
       shortcuts,
       visible: win.isVisible(),
       chatProbe,
+      slashChat,
+      askChat,
+      retryChat,
       bounds: win.getBounds(),
       workArea: screen.getDisplayMatching(win.getBounds()).workArea,
       tray: !!tray,
