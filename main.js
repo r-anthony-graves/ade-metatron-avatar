@@ -377,7 +377,7 @@ function buildMenu() {
     { label: state.online ? `Ade OS: ${state.pending ? state.pending + ' awaiting approval' : (state.busy ? 'working' : 'idle')}` : 'Ade OS: offline', enabled: false },
     { label: state.brain ? '  ' + state.brain : '  (no brain reported)', enabled: false },
     { type: 'separator' },
-    { label: 'Avatar', accelerator: 'Ctrl+Alt+C', click: () => { if (win && !win.isDestroyed()) { if (win.isVisible()) { win.hide(); } else { win.show(); win.focus(); } } else { createWindow(); } } },
+    { label: 'Chat window', accelerator: 'Ctrl+Alt+C', click: () => openChat() },
     { label: (pttOn ? 'Stop listening' : 'Speak a command') + (shortcuts.talk ? '' : '  (no hotkey available)'), accelerator: shortcuts.talk || undefined, click: togglePtt },
     {
       label: micLive ? 'Mute the microphone' : 'Unmute the microphone',
@@ -546,12 +546,7 @@ if (!app.requestSingleInstanceLock()) {
        indistinguishable from a dead app, so every result is recorded and the
        tray menu shows whichever one actually bound. */
 const wanted = [
-      ['avatar', ['Control+Alt+C'], () => {
-        if (win && !win.isDestroyed()) {
-          if (win.isVisible()) { win.hide(); }
-          else { win.show(); win.focus(); }
-        } else { createWindow(); }
-      }],
+      ['chat', ['Control+Alt+C'], () => openChat()],
       ['talk', ['Control+Alt+Space', 'Control+Shift+Space', 'Control+Alt+V'],
         () => win && win.webContents.send('ui:micToggle')],
       ['stop', ['Control+Alt+S'], () => {
