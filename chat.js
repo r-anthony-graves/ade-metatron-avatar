@@ -56,6 +56,9 @@
     }
   }
   window.__archive = function () { return threads.archive || []; };
+  window.__commandNames = function () {
+    return COMMANDS.map(function (c) { return c.name; });
+  };
 
   function renderThread() {
     var list = threads[activeTab];
@@ -224,7 +227,7 @@
     { name: 'audit', hint: 'Audit trail', stub: true },
     { name: 'autonomy', hint: 'Show/change autonomy level', stub: false },
     { name: 'benchmark', hint: 'Run benchmark', stub: true },
-    { name: 'cancel', hint: 'Cancel any staged operation - reset stag', stub: false },
+    { name: 'cancel', hint: 'nothing to cancel; clear the input box', stub: false },
     { name: 'cite', hint: 'Cite sources from recent answers', stub: false },
     { name: 'clear', hint: 'move this tab to session memory', stub: false },
     { name: 'compact', hint: 'keep the last 20, archive the rest', stub: false },
@@ -240,7 +243,7 @@
     { name: 'help', hint: 'list these commands', stub: false },
     { name: 'inspect', hint: 'Inspect internal state', stub: true },
     { name: 'journal', hint: 'Show trade journal', stub: false },
-    { name: 'kill', hint: 'Emergency trading halt', stub: false },
+    { name: 'kill', hint: 'refuses: no trading path connected', stub: true },
     { name: 'learn', hint: 'Analyze trading experience', stub: false },
     { name: 'live', hint: 'Live trading status', stub: true },
     { name: 'logs', hint: 'View logs', stub: true },
@@ -268,7 +271,7 @@
     { name: 'status', hint: 'window status', stub: false },
     { name: 'steps', hint: 'Show current step list', stub: false },
     { name: 'summarize', hint: 'Summarize current thread', stub: false },
-    { name: 'system', hint: 'System information', stub: false },
+    { name: 'system', hint: 'Electron/Chromium/platform versions', stub: false },
     { name: 'task', hint: 'List open tasks', stub: false },
     { name: 'tools', hint: 'Available tools', stub: true },
     { name: 'trace', hint: 'Show execution trace', stub: true },
@@ -1037,8 +1040,13 @@
             }
             handled = true;
 } else if (cmd === 'cancel') {
-            // Cancel any staged operation - reset staged state
-            // (no-op for now, staged drafts are per-session)
+            /* Was `handled = true` and nothing else: it swallowed the Enter
+               and said nothing, which is indistinguishable from a dead command.
+               There is nothing to cancel by the time this runs -- a staged
+               draft lives in the input box, and typing /cancel replaced it. */
+            push(activeTab, 'system', 'text',
+                 'Nothing to cancel. A staged draft sits in the input box, so '
+                 + 'typing /cancel already replaced it - clear the box instead.');
             handled = true;
          } else if (cmd === 'plan') {
             // Show plan summary
@@ -1249,11 +1257,22 @@
             handled = true;
          } else if (cmd === 'live') {
             // Live trading status - stub command with permission check
-            push(activeTab, 'system', 'text', 'Live trading: permission required - use /kill to halt');
+            /* Pointed at /kill "to halt", which halts nothing. */
+            push(activeTab, 'system', 'text',
+                 'Live trading: stub - no trading path connected from the avatar, '
+                 + 'so this reports nothing about a live desk.');
             handled = true;
          } else if (cmd === 'kill') {
             // Emergency trading halt
-            push(activeTab, 'system', 'text', 'Trading halted. Emergency halt engaged.');
+            /* This said "Trading halted. Emergency halt engaged." and halted
+               nothing: there is no trading path from this window. An emergency
+               stop that reports success without acting is the failure that
+               already cost real money here -- commit 44850b8 recorded "the
+               trading daemon stopped" while it live-traded for three more
+               days. It refuses instead of pretending. */
+            push(activeTab, 'system', 'text',
+                 'HALT NOT SENT: stub - no trading path connected from the avatar. '
+                 + 'Nothing was stopped. Halt at the desk that holds the position.');
             handled = true;
          } else if (cmd === 'autonomy') {
             // Show/change autonomy level
@@ -1340,7 +1359,19 @@
             handled = true;
          } else if (cmd === 'system') {
             // System information
-            push(activeTab, 'system', 'text', 'System: Electron ' + process.version + ', OS: Windows, GPU: integrated');
+            /* navigator, not process: contextIsolation:true means `process`
+               does not exist here, and reaching for it threw ReferenceError --
+               which aborts this handler, so /system printed nothing AND ate the
+               Enter. The OS and GPU strings it also carried were hardcoded;
+               userAgent is the version data this window genuinely has. */
+            var ua = String(navigator.userAgent || '');
+            var el = /Electron\/([^\s]+)/.exec(ua);
+            var ch = /Chrome\/([^\s]+)/.exec(ua);
+            push(activeTab, 'system', 'text',
+                 'Electron ' + (el ? el[1] : 'unknown') +
+                 ', Chromium ' + (ch ? ch[1] : 'unknown') +
+                 ', platform ' + (navigator.platform || 'unknown') +
+                 '. Ade OS itself: /health.');
             handled = true;
          } else if (cmd === 'health') {
             /* Reads Ade OS. The literal this replaces answered "all systems

@@ -1384,6 +1384,40 @@ function startSmokeRun() {
         && healthCmd.namedSubsystem && healthCmd.notCanned;
     } catch (e) { healthCmd = { error: String((e && e.message) || e) }; }
 
+    /* Every command in COMMANDS, driven through the REAL keydown path, with the
+       chat renderer's console captured -- smokeLogs only ever collected the
+       glyph window, which is why a total parse failure once surfaced as five
+       opaque "Script failed to execute" strings instead of one syntax error.
+
+       /reset is skipped: it hides the window, which would end the run. */
+    let cmdAudit = {};
+    try {
+      const errs = [];
+      const onMsg = (_e, level, message) => { if (level >= 2) errs.push(String(message).slice(0, 160)); };
+      chatWin.webContents.on('console-message', onMsg);
+      const js = (s2) => chatWin.webContents.executeJavaScript(s2);
+      const names = JSON.parse(await js(
+        'JSON.stringify(window.__commandNames ? window.__commandNames() : [])'));
+      const rows = {};
+      for (const n of names) {
+        if (n === 'reset') { rows[n] = 'SKIPPED (hides the window)'; continue; }
+        const at = errs.length;
+        await js('(function(){ window.__threads().chat.length = 0;'
+          + ' var i=document.getElementById("in"); i.value="/' + n + '";'
+          + ' i.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));'
+          + ' })(),0');
+        await new Promise((r) => setTimeout(r, 130));
+        const said = await js('(function(){ var t=window.__threads().chat;'
+          + ' return t.map(function(m){return m.text;}).join(" | "); })()');
+        rows[n] = { said: String(said).slice(0, 90), threw: errs.length > at };
+      }
+      chatWin.webContents.removeListener('console-message', onMsg);
+      const silent = Object.keys(rows).filter((n) => rows[n].said === '');
+      const threw = Object.keys(rows).filter((n) => rows[n].threw);
+      cmdAudit = { count: names.length, rows, silent, threw, consoleErrors: errs.slice(0, 8) };
+      cmdAudit.ok = silent.length === 0 && threw.length === 0;
+    } catch (e) { cmdAudit = { error: String((e && e.message) || e) }; }
+
     /* Retry on failure (spec Error handling): a failed call stages the ORIGINAL
        line back into the input so Enter is the retry action. */
     let retryChat = {};
@@ -1541,6 +1575,7 @@ function startSmokeRun() {
       cmdPopup,
       clearArchive,
       healthCmd,
+      cmdAudit,
       retryChat,
       smsApproval,
       dropChat,

@@ -28,6 +28,16 @@ function stripComments(src) {
   return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 }
 
+/* Comments AND string literals out, for guards that look for CODE constructs.
+   Three guards in this file have now fired on English rather than JavaScript --
+   twice on the comment explaining the bug, once on the phrase "no reply from
+   the main process." Prose is not code; stop reading it. */
+function codeOnly(src) {
+  return stripComments(src)
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""');
+}
+
 /* Branch openers: `if (cmd === 'name') {` and `} else if (cmd === 'name') {`. */
 function branchNames() {
   const out = [];
@@ -157,4 +167,37 @@ test('/health measures instead of asserting', () => {
      both did exactly that before being anchored properly. */
   assert.ok(!/nominal/i.test(stripComments(body)),
     '/health still claims "nominal" from a literal');
+});
+
+test('no command branch reaches for node globals', () => {
+  /* The chat window runs contextIsolation:true, nodeIntegration:false, so
+     `process` does not exist there. /system did `'Electron ' + process.version`
+     and threw ReferenceError -- which aborts the keydown handler, so it printed
+     nothing AND swallowed the Enter. Anything from main belongs on the bridge. */
+  const bad = [];
+  const re = /\b(process|require|__dirname|Buffer)\s*[.(]/g;
+  let m;
+  const code = codeOnly(SRC);
+  while ((m = re.exec(code))) bad.push(m[1]);
+  assert.deepEqual([...new Set(bad)].sort(), [],
+    'renderer reaches for a node global that is not there: ' + [...new Set(bad)].join(', '));
+});
+
+test('no command answers with silence', () => {
+  /* /cancel was `handled = true` and nothing else: it ate the Enter and said
+     nothing, which from the outside is indistinguishable from a dead command.
+     Every branch has to leave a trace. */
+  const re = /if \(cmd === '([a-z]+)'\) \{/g;
+  const bounds = [];
+  let m;
+  while ((m = re.exec(SRC))) bounds.push({ name: m[1], at: m.index, end: re.lastIndex });
+  const silent = [];
+  bounds.forEach((b, i) => {
+    const stop = i + 1 < bounds.length ? bounds[i + 1].at : b.end + 1200;
+    const body = stripComments(SRC.slice(b.end, stop));
+    /* hideChat() counts: the window going away IS the feedback */
+    if (body.indexOf('push(') === -1 && body.indexOf('hideChat') === -1) silent.push(b.name);
+  });
+  assert.deepEqual([...new Set(silent)].sort(), [],
+    'command prints nothing and gives no feedback: ' + silent.join(', '));
 });
