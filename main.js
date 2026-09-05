@@ -18,6 +18,7 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, screen, shell, nativeImage, cli
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { loadThreads, saveThreads } = require('./threads-store');
 
 const ADE_BASE = process.env.ADEOS_URL || 'http://127.0.0.1:8300';
 const SMOKE = process.argv.includes('--smoke');
@@ -25,8 +26,10 @@ const BAR_H = 108;                       /* the command bar lives under the glyp
 const CFG_PATH = () => path.join(app.getPath('userData'), 'avatar-state.json');
 
 let win = null, tray = null, timer = null, dragAnchor = null;
+let chatWin = null;                 /* the desktop conversation window */
 let overPaint = false, barOpen = false, lastIgnore = null;
-let cfg = { x: null, y: null, size: 380, clickThrough: false, speak: false, opacity: 1, backing: true, mic: true };
+let cfg = { x: null, y: null, size: 380, clickThrough: false, speak: false, opacity: 1, backing: true, mic: true,
+            chatX: null, chatY: null, chatW: 900, chatH: 620 };
 let micLive = false;   /* what the renderer last reported, for the tray label */
 let state = { online: false, busy: false, pending: 0, brain: '', approval: null };
 
@@ -39,6 +42,26 @@ function saveCfg() {
     fs.mkdirSync(path.dirname(CFG_PATH()), { recursive: true });
     fs.writeFileSync(CFG_PATH(), JSON.stringify(cfg, null, 2));
   } catch (e) {}
+}
+
+let smokeThreadsDir = null;
+function threadsPath() {
+  if (!SMOKE) return path.join(app.getPath('userData'), 'threads.json');
+  if (!smokeThreadsDir) smokeThreadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ade-threads-smoke-'));
+  return path.join(smokeThreadsDir, 'threads.json');
+}
+let threadsTimer = 0, lastThreads = null;
+function queueThreadsSave(data) {
+  lastThreads = data;
+  if (threadsTimer) clearTimeout(threadsTimer);
+  threadsTimer = setTimeout(() => {
+    threadsTimer = 0;
+    try { saveThreads(threadsPath(), lastThreads); } catch (e) {}
+  }, 400);
+}
+function flushThreads() {
+  if (threadsTimer) { clearTimeout(threadsTimer); threadsTimer = 0; }
+  if (lastThreads) { try { saveThreads(threadsPath(), lastThreads); } catch (e) {} lastThreads = null; }
 }
 
 /* ---------------------------------------------------------------- Ade OS */
@@ -224,6 +247,7 @@ async function pollAde() {
   }
   state = { online, busy, pending, brain, approval };
   if (win && !win.isDestroyed()) win.webContents.send('ade:state', state);
+  if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.send('ade:state', state);
   if (tray) {
     tray.setToolTip(online
       ? `Ade OS — ${pending ? pending + ' awaiting approval' : (busy ? 'working' : 'idle')}\n${brain}`
@@ -301,12 +325,60 @@ function createWindow() {
   win.on('closed', () => { win = null; });
 }
 
+/* The conversation window. A REAL window: framed, resizable, taskbar-listed,
+   not always-on-top -- the "desktop" the request asked for, distinct from the
+   transparent click-through glyph. Created hidden; the glyph, the hotkey and
+   the voice path open it. Closing it hides it: the orb keeps the app alive. */
+function createChatWindow() {
+  chatWin = new BrowserWindow({
+    width: cfg.chatW || 900, height: cfg.chatH || 620,
+    ...(cfg.chatX == null ? {} : { x: cfg.chatX, y: cfg.chatY }),
+    frame: true, title: 'Ade', show: false,
+    resizable: true, minimizable: true, maximizable: true, fullscreenable: true,
+    backgroundColor: '#f3f4f6',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true, nodeIntegration: false,
+      backgroundThrottling: false
+    }
+  });
+  chatWin.loadFile('chat.html');
+  const saveBounds = () => {
+    if (!chatWin || chatWin.isDestroyed()) return;
+    const [x, y] = chatWin.getPosition();
+    const [w, h] = chatWin.getSize();
+    cfg.chatX = x; cfg.chatY = y; cfg.chatW = w; cfg.chatH = h;
+    saveCfg();
+  };
+  chatWin.on('moved', saveBounds);
+  chatWin.on('resize', saveBounds);
+  chatWin.on('close', (e) => {                    /* X hides; the app lives */
+    e.preventDefault();
+    if (chatWin && !chatWin.isDestroyed()) chatWin.hide();
+  });
+  chatWin.on('closed', () => { chatWin = null; });
+}
+
+/* Open/focus the chat window; `tab` optionally pre-selects a thread. */
+function openChat(tab) {
+  if (!chatWin || chatWin.isDestroyed()) return;
+  if (cfg.chatX != null) {
+    const b = chatWin.getBounds();
+    const fitted = clampToScreen(b.x, b.y, b.width, b.height);
+    if (fitted.x !== b.x || fitted.y !== b.y) chatWin.setPosition(fitted.x, fitted.y);
+  }
+  chatWin.show();
+  chatWin.focus();
+  if (tab && chatWin.webContents) chatWin.webContents.send('chat:focus', tab);
+}
+
 /* ------------------------------------------------------------------ tray */
 function buildMenu() {
   return Menu.buildFromTemplate([
     { label: state.online ? `Ade OS: ${state.pending ? state.pending + ' awaiting approval' : (state.busy ? 'working' : 'idle')}` : 'Ade OS: offline', enabled: false },
     { label: state.brain ? '  ' + state.brain : '  (no brain reported)', enabled: false },
     { type: 'separator' },
+    { label: 'Chat window', click: () => openChat() },
     { label: 'Command bar' + (shortcuts.bar ? '' : '  (no hotkey available)'), accelerator: shortcuts.bar || undefined, click: () => win && win.webContents.send('ui:toggleBar') },
     { label: (pttOn ? 'Stop listening' : 'Speak a command') + (shortcuts.talk ? '' : '  (no hotkey available)'), accelerator: shortcuts.talk || undefined, click: togglePtt },
     {
@@ -397,7 +469,16 @@ ipcMain.handle('cfg:speak', () => !!cfg.speak);
 ipcMain.on('mic:state', (_e, live) => {
   micLive = !!live;
   if (cfg.mic !== micLive) { cfg.mic = micLive; saveCfg(); }
+  if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.send('mic:state', micLive);
 });
+ipcMain.handle('threads:load', () => {
+  try { return loadThreads(threadsPath()); } catch (e) { return { chat: [], shell: [], task: [] }; }
+});
+ipcMain.on('threads:save', (_e, data) => queueThreadsSave(data));
+ipcMain.on('chat:open', (_e, tab) => openChat(tab));
+ipcMain.on('chat:hide', () => { if (chatWin && !chatWin.isDestroyed()) chatWin.hide(); });
+ipcMain.on('mic:toggle', () => win && win.webContents.send('ui:micToggle'));
+ipcMain.handle('mic:status', () => !!micLive);
 ipcMain.handle('ade:speak', (_e, text) => adeSpeak(text));
 
 ipcMain.handle('win:dragStart', () => {
@@ -436,12 +517,13 @@ ipcMain.on('app:copy', (_e, text) => clipboard.writeText(String(text || '')));
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => { if (win) { win.show(); win.focus(); } });
+  app.on('second-instance', () => { openChat(); });
 
   app.whenReady().then(() => {
     loadCfg();
     createWindow();
     createTray();
+    createChatWindow();
     pollAde();
     timer = setInterval(pollAde, 2000);
 
@@ -481,6 +563,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => { /* the tray keeps it alive */ });
   app.on('will-quit', () => {
     if (timer) clearInterval(timer);
+    flushThreads();
     try { require('electron').globalShortcut.unregisterAll(); } catch (e) {}
   });
 }
@@ -1126,9 +1209,48 @@ function startSmokeRun() {
             && hit.barOpen.focusable === true;
     } catch (e) { hit = { error: String((e && e.message) || e) }; }
 
+    /* The chat window exists, is a real framed window, stays hidden until
+       opened, draws the three tab names, and persists threads through the
+       bridge. The temp threads path keeps the smoke run off Ray's real file. */
+    let chatProbe = {};
+    try {
+      chatProbe.exists = !!(chatWin && !chatWin.isDestroyed());
+      if (chatWin) {
+        chatProbe.hiddenAtLaunch = !chatWin.isVisible();
+        chatProbe.resizable = chatWin.isResizable();
+        /* Electron 33 exposes setSkipTaskbar(skip) but no isSkipTaskbar() getter,
+           so the taskbar assertion must degrade gracefully. */
+        chatProbe.inTaskbar = chatWin.isSkipTaskbar ? !chatWin.isSkipTaskbar() : true;
+        chatProbe.title = chatWin.getTitle();
+        chatProbe.tabs = JSON.parse(await chatWin.webContents.executeJavaScript(
+          'JSON.stringify([].map.call(document.querySelectorAll("#tabs .tab"), function(t){ return t.getAttribute("data-tab"); }))'
+        ));
+        await new Promise((r) => setTimeout(r, 300));
+        chatProbe.loadedThreads = await chatWin.webContents.executeJavaScript(
+          'window.__threadsLoaded ? window.__threads().chat.length : -1'
+        );
+        await chatWin.webContents.executeJavaScript(
+          'window.adeBridge.threadsSave({chat:[{id:"smoke",role:"user",kind:"text",text:"t",meta:{}}],shell:[],task:[]}),0'
+        );
+        await new Promise((r) => setTimeout(r, 900));   /* main's 400ms write debounce */
+        chatProbe.bridgeRoundTrip = await chatWin.webContents.executeJavaScript(
+          '(async function(){ var t = await window.adeBridge.threadsLoad(); return t && t.chat && t.chat[0] ? t.chat[0].id : null; })()'
+        );
+      }
+      chatProbe.ok = chatProbe.exists === true
+        && chatProbe.hiddenAtLaunch === true
+        && chatProbe.resizable === true
+        && chatProbe.inTaskbar === true
+        && chatProbe.title === 'Ade'
+        && JSON.stringify(chatProbe.tabs) === JSON.stringify(['chat', 'shell', 'task'])
+        && chatProbe.loadedThreads === 0
+        && chatProbe.bridgeRoundTrip === 'smoke';
+    } catch (e) { chatProbe = { error: String((e && e.message) || e) }; }
+
     console.log('SMOKE ' + JSON.stringify({
       shortcuts,
       visible: win.isVisible(),
+      chatProbe,
       bounds: win.getBounds(),
       workArea: screen.getDisplayMatching(win.getBounds()).workArea,
       tray: !!tray,

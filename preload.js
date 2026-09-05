@@ -16,6 +16,18 @@ contextBridge.exposeInMainWorld('adeBridge', {
   speakEnabled: () => ipcRenderer.invoke('cfg:speak'),
   speak: (text) => ipcRenderer.invoke('ade:speak', text),
 
+  /* ---- chat window surface (both windows may call these) ---- */
+  openChat: (tab) => ipcRenderer.send('chat:open', tab),
+  hideChat: () => ipcRenderer.send('chat:hide'),
+  threadsLoad: () => ipcRenderer.invoke('threads:load'),
+  threadsSave: (data) => ipcRenderer.send('threads:save', data),
+  micToggle: () => ipcRenderer.send('mic:toggle'),
+  micStatus: () => ipcRenderer.invoke('mic:status'),
+  saySpeech: (ev) => ipcRenderer.send('chat:speech', ev),
+  onChatFocus: (fn) => ipcRenderer.on('chat:focus', (_e, tab) => fn(tab)),
+  onSpeech: (fn) => ipcRenderer.on('chat:speech', (_e, ev) => fn(ev)),
+  onMicState: (fn) => ipcRenderer.on('mic:state', (_e, live) => fn(!!live)),
+
   /* File and folder upload. The renderer never reads a file and never sends
      one: the page's CSP is `default-src 'none'`, so it cannot reach the
      network at all, and Electron 32 removed `File.path`, so it cannot even
@@ -28,6 +40,7 @@ contextBridge.exposeInMainWorld('adeBridge', {
   pick: (wantFolder) => ipcRenderer.invoke('ade:pick', !!wantFolder),
   upload: (paths, overwrite) => ipcRenderer.invoke('ade:upload', paths, !!overwrite),
 
+  /* ---- glyph-window events (unchanged) ---- */
   onState: (fn) => ipcRenderer.on('ade:state', (_e, s) => fn(s)),
   onToggleBar: (fn) => ipcRenderer.on('ui:toggleBar', () => fn()),
   onArm: (fn) => ipcRenderer.on('ui:arm', () => fn()),
@@ -36,16 +49,11 @@ contextBridge.exposeInMainWorld('adeBridge', {
   onBacking: (fn) => ipcRenderer.on('ui:backing', (_e, on) => fn(on)),
   onSpeak: (fn) => ipcRenderer.on('ui:speak', (_e, t) => fn(t)),
   onHush: (fn) => ipcRenderer.on('ui:hush', () => fn()),
-  /* the renderer owns the mic; it reports state, main mirrors it in the tray */
   micState: (live) => ipcRenderer.send('mic:state', !!live),
   onMicToggle: (fn) => ipcRenderer.on('ui:micToggle', () => fn()),
   onPttDown: (fn) => ipcRenderer.on('ui:pttDown', () => fn()),
   onPttUp: (fn) => ipcRenderer.on('ui:pttUp', () => fn()),
 
-  /* whether the cursor is over painted pixels -- everything else is handed
-     back to the window underneath, see applyHit() in main.js */
-  /* which hotkeys actually bound -- the hint line has to name the real one,
-     not a second hardcoded string that goes stale on the next fallback */
   shortcuts: () => ipcRenderer.invoke('app:shortcuts'),
   hit: (on) => ipcRenderer.send('win:hit', !!on),
   bar: (open) => ipcRenderer.send('win:bar', !!open),
