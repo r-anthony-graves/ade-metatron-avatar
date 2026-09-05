@@ -376,8 +376,7 @@ function buildMenu() {
     { label: state.online ? `Ade OS: ${state.pending ? state.pending + ' awaiting approval' : (state.busy ? 'working' : 'idle')}` : 'Ade OS: offline', enabled: false },
     { label: state.brain ? '  ' + state.brain : '  (no brain reported)', enabled: false },
     { type: 'separator' },
-    { label: 'Chat window', click: () => openChat() },
-    { label: 'Command bar' + (shortcuts.bar ? '' : '  (no hotkey available)'), accelerator: shortcuts.bar || undefined, click: () => win && win.webContents.send('ui:toggleBar') },
+    { label: 'Chat window' + (shortcuts.chat ? '' : '  (no hotkey available)'), accelerator: shortcuts.chat || undefined, click: () => openChat() },
     { label: (pttOn ? 'Stop listening' : 'Speak a command') + (shortcuts.talk ? '' : '  (no hotkey available)'), accelerator: shortcuts.talk || undefined, click: togglePtt },
     {
       label: micLive ? 'Mute the microphone' : 'Unmute the microphone',
@@ -426,7 +425,7 @@ function dialogNote(msg) {
 }
 
 let smokeLogs = null;
-const shortcuts = { bar: null, talk: null };
+const shortcuts = { chat: null, talk: null };
 let pttOn = false, pttTimer = null;
 const PTT_MAX_MS = 8000;
 function togglePtt() {
@@ -446,7 +445,7 @@ function createTray() {
   const img = nativeImage.createFromPath(path.join(__dirname, 'icon.png'));
   tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img.resize({ width: 20, height: 20 }));
   tray.setToolTip('Ade OS avatar');
-  tray.on('click', () => win && win.webContents.send('ui:toggleBar'));
+  tray.on('click', () => openChat());
   tray.on('right-click', () => tray.popUpContextMenu(buildMenu()));
 }
 
@@ -546,7 +545,12 @@ if (!app.requestSingleInstanceLock()) {
        indistinguishable from a dead app, so every result is recorded and the
        tray menu shows whichever one actually bound. */
     const wanted = [
-      ['bar', ['Control+Alt+A', 'Control+Shift+A', 'Control+Alt+G'], () => win && win.webContents.send('ui:toggleBar')],
+      ['chat', ['Control+Alt+A', 'Control+Shift+A', 'Control+Alt+G'], () => {
+        /* open/focus, or hide when it already has focus -- the bar's old
+           toggle behaviour, moved to a window that can be hidden. */
+        if (chatWin && chatWin.isVisible() && chatWin.isFocused()) chatWin.hide();
+        else openChat();
+      }],
       ['talk', ['Control+Alt+Space', 'Control+Shift+Space', 'Control+Alt+V'],
         () => win && win.webContents.send('ui:micToggle')]
     ];
@@ -665,7 +669,8 @@ function startSmokeRun() {
         hintMatchesBinding: shortcuts.talk
           ? (plain(shown) === shortcuts.talk && shown.indexOf('++') < 0)
           : shown === 'tray menu',
-        takesNoOsKey: !OS_OWNED.includes(shortcuts.bar) && !OS_OWNED.includes(shortcuts.talk)
+        takesNoOsKey: !OS_OWNED.includes(shortcuts.chat) && !OS_OWNED.includes(shortcuts.talk),
+        chatHotkey: shortcuts.chat
       };
       keys.ok = keys.hintMatchesBinding && keys.takesNoOsKey;
     } catch (e) { keys = { error: String((e && e.message) || e) }; }

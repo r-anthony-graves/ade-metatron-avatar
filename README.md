@@ -20,30 +20,36 @@ browser, or a terminal staying open.
 | | |
 |---|---|
 | **Drag** the glyph | move it anywhere, on any monitor; position is remembered |
-| **Click** the glyph, or **Ctrl+Alt+A** | open the command bar |
-| **Right-click** the glyph, or the tray icon | menu: size, opacity, click-through, backing glow, restart Ade, quit |
-| **Esc** | hide the command bar |
+| **Click** the glyph, **Ctrl+Alt+A**, or the tray's *Chat window* | open the desktop conversation window |
+| **Right-click** the glyph, or the tray icon | menu: chat window, size, opacity, click-through, backing glow, restart Ade, quit |
+| **Esc** | hide the conversation window (the orb and the tray keep the app alive) |
+
+Clicking the orb is now the launcher: a single click opens the window with the
+input focused. The orb itself never steals the keyboard — every keypress
+belongs to the conversation window or to whatever is underneath the transparent
+bits.
 
 If you cannot find it, the saved position may be stale from a different monitor
 layout. It is now clamped on startup so at least a corner always stays on a
 real display, and **Reset position** in the tray menu drops it back to the
 bottom-right.
 
-In the command bar, the chip on the left always names what will happen:
+The window has three tabs, and the labelless input row inherits the active
+tab's default. The prefixes still override at every turn:
 
-| You type | Chip | Where it goes |
-|---|---|---|
-| `what is in glyph.js` | **Ask** | `POST /v1/ask` — a grounded read against the three machine-access roots; the reply names which root it read |
-| `fix the failing test in test_gate.py` | **Ask** → re-arms to **Task** | `POST /v1/ask` decides this is a change, does nothing, and stages `/coding fix the failing test in test_gate.py` in the bar — **nothing runs until you press Enter** |
-| `/qa run the trust-level suite` | **Task · qa** | `POST /v1/tasks` — an agent does the work, with an explicit task type |
-| `!git status` | **Shell** | `POST /v1/terminal` — direct subprocess |
-| `?what brain are you on` | **Ask** | `POST /v1/chat/completions` — plain chat, no roots read |
+| You type (or the tab you are in) | Where it goes |
+|---|---|
+| Chat tab: `what is in glyph.js` | `POST /v1/ask` — a grounded read against the three machine-access roots; the reply names which root it read |
+| Chat tab: `fix the failing test in test_gate.py` | `POST /v1/ask` decides this is a change, does nothing, and stages `/coding fix the failing test in test_gate.py` in the **Task tab** — **nothing runs until you press Enter** |
+| Task tab, or `/qa run the trust-level suite` | `POST /v1/tasks` — an agent does the work, with an explicit task type |
+| Shell tab, or `!git status` | `POST /v1/terminal` — direct subprocess |
+| `?what brain are you on` | `POST /v1/chat/completions` — plain chat, no roots read |
 
-Bare text used to dispatch a coding Task the instant you pressed Enter, with
-no review step. It asks now: `/v1/ask` either answers directly or — for
-anything that looks like a change — does nothing and hands back what it
-would run, which lands in the bar as a staged `/<type> <prompt>` for you to
-read before it does anything. `/`, `!` and `?` are unchanged.
+Bare text used to dispatch a coding Task the instant you pressed Enter. It asks
+now: `/v1/ask` either answers directly or — for anything that looks like a
+change — does nothing and hands back what it would run, which lands in the Task
+tab as a staged `/<type> <prompt>` for you to read before it does anything.
+Every thread persists across restarts (`userData/threads.json`).
 
 ## Voice
 
@@ -61,7 +67,7 @@ nothing. "Hey Ade" and "Ada" work too: all three transcribe to the same token,
 which was measured against the live recogniser rather than assumed. "Adelaide"
 does not trigger it — the wake token needs a separator after it.
 
-**Mute stops the track.** The button in the command bar, the tray item, and the
+**Mute stops the track.** The **Mute** button in the chat window, the tray item, and the
 talk hotkey all do the same thing: they stop the microphone track, so the
 operating system's own mic indicator goes out. It is not a filter that keeps
 capturing and throws the results away — a mute that leaves the mic open is a
@@ -82,7 +88,7 @@ the tray menu shows the one that actually bound, or says
 
 | | tried, in order |
 |---|---|
-| Command bar | `Ctrl+Alt+A` → `Ctrl+Shift+A` → `Ctrl+Alt+G` |
+| Chat window | `Ctrl+Alt+A` → `Ctrl+Shift+A` → `Ctrl+Alt+G` |
 | Speak a command | `Ctrl+Alt+Space` → `Ctrl+Shift+Space` → `Ctrl+Alt+V` |
 
 **No OS key is asked for.** `globalShortcut` is system-wide, so whatever the
@@ -107,8 +113,8 @@ machine and nothing is written to disk either way.
 **Recognition is open vocabulary now.** A whisper.cpp sidecar on loopback
 (`:1242`) answers first — say anything, not just a fixed phrase list. The
 response's `engine` field says which recogniser actually answered
-(`"whisper"` or `"windows"`); when it is not `"whisper"` the spoken text in
-the command bar's reply is suffixed ` · windows` so a stopped sidecar reads
+(`"whisper"` or `"windows"`); when it is not `"whisper"` the spoken
+transcript in the window is suffixed ` · windows` so a stopped sidecar reads
 as a fallback, never as a silently worse model.
 
 **If the sidecar is down, the live microphone goes SILENT, not degraded.**
@@ -143,20 +149,21 @@ one of these and it fires straight away, on either engine:
 | check the health / what are you doing / what is pending | reads Ade's state back |
 | list the agents / show the backlog | reads and speaks the answer |
 | run the tests | dispatches a task |
-| read the file | opens the command bar primed for you to finish typing |
-| open the command bar / stop | drives the avatar itself |
+| read the file | opens the chat window primed for you to finish typing |
+| open the command window | opens the chat window; **stop** cuts off speech and opens nothing |
 
 Anything else is open speech: it is rewritten through the same leading-word
-prefixes the command bar understands when typed (`shell …` → `!`, `ask …` →
+prefixes the chat window understands when typed (`shell …` → `!`, `ask …` →
 `?`, `task <type> …` → `/<type>`). A recognised `shell`/`ask`/`task` keyword,
-or an explicit task type, lands in the bar for you to review and press Enter
-— it is never dispatched on recognition alone.
+or an explicit task type, opens the matching tab and stages it in the window's
+input for you to review and press Enter — it is never dispatched on
+recognition alone.
 
 Bare open speech — no leading keyword — is different: it is answered
 straight away, spoken back, over `POST /v1/ask`. That is safe on recognition
 alone because asking changes nothing: `/v1/ask` either answers a question or,
 for anything that looks like a change, does nothing and hands back what it
-would run, which still lands in the bar as a staged `/<type> <prompt>` for
+would run, which stages in the Task tab as a `/<type> <prompt>` for
 your own Enter. Speech never reaches `POST /v1/tasks` by itself.
 
 ### Voice cannot approve anything
@@ -176,7 +183,7 @@ human's click, and so does every dispatch to `/v1/tasks`.
 | Ade offline | quiet, dim, desaturated to steel |
 | Ade idle | slow gold breathing |
 | Ade working | burns brighter, particles accelerate |
-| A decision waiting on you | turns **amber**, throws arcs, and the command bar opens with Allow / Deny |
+| A decision waiting on you | turns **amber**, throws arcs, and the chat window raises with the approval card in its Task tab |
 
 That last row is the point of putting it on the desktop. An approval that nobody
 sees is an approval that times out, and `WaitingApprover` denies on timeout —
@@ -192,8 +199,9 @@ These are **not** equally governed, and the UI says so at the point of use:
   in the audit log.
 - **`/v1/terminal`** — a direct `subprocess.run`. Ade OS treats this route as
   Ray's own keyboard and **does not consult the gate at all** (see the docstring
-  at `adeos/api/app.py:3281`). The Shell chip turns amber and the hint line reads
-  *"NOT gated by Permission.check()"* whenever you type `!`.
+  at `adeos/api/app.py:3281`). The Shell tab is labelled
+  *"NOT gated by Permission.check()"* permanently — typing into it is always a
+  direct subprocess.
 
 The Electron process never spawns a shell of its own. Everything goes over
 loopback HTTP to Ade OS, so there is exactly one place where execution happens
@@ -220,9 +228,9 @@ So the window is click-through by default and only takes the mouse where the
 glyph is actually drawn: the renderer alpha-tests the canvas under the cursor
 (threshold 48, the point the backing halo has faded out, with a 5px pad so a
 one-pixel line is still grabbable) and `applyHit()` in `main.js` acts on it.
-Focus follows the same rule — only the command bar has any use for the
-keyboard, so only the command bar may take the foreground, and closing it
-gives the keyboard back.
+Focus follows the same rule — the glyph is **never** keyboard-focusable, so a
+click on it can neither trap keystrokes nor steal the foreground from the
+window underneath; all typing goes to the conversation window.
 
 `--smoke` asserts both directions, because a click-through window that is also
 click-through over its own glyph is just as broken:
@@ -232,8 +240,7 @@ click-through over its own glyph is just as broken:
 | `overCorner.ignoresMouse` | `true` — a transparent corner belongs to the window below |
 | `overGlyph.ignoresMouse` | `false` — the glyph itself is still grabbable |
 | `offAgain.ignoresMouse` | `true` — it lets go again |
-| `barClosed.focusable` | `false` — idle, it cannot steal the keyboard |
-| `barOpen.focusable` | `true` — open, you can type in it |
+| `glyphNotFocusable` | `true` — the glyph is never keyboard-focusable, so it cannot steal the keyboard |
 
 Deleting the fix turns `hit.ok` false and reproduces the two original values
 (`TRANSPARENT False`, `NOACTIVATE False`), so the guard is falsified by
@@ -253,7 +260,8 @@ glow** in the tray menu for pure transparency.
 | File | |
 |---|---|
 | `glyph.js` | the renderer — **the single source of truth**, shared with the full-screen page |
-| `avatar.html` / `ui.js` | the desktop shell: drag, command bar, approvals |
+| `avatar.html` / `ui.js` | the transparent glyph: drag, mic, hit area, launcher |
+| `chat.html` / `chat.js` | the desktop conversation window: tabs, staging, approvals |
 | `main.js` | window, tray, polling, and the only door to Ade OS |
 | `preload.js` | the narrow bridge |
 | `tools/build-artifact.js` | wraps `glyph.js` into the standalone full-screen page |
@@ -278,3 +286,10 @@ lit versus clear pixels to prove the background is really transparent, writes
 `smoke.png`, prints what Ade looks like from here, and exits. `clearPixels` must
 be non-zero — it was `0` on the first run, which caught the bloom pass writing
 alpha across the whole window and making it opaque.
+
+The same run asserts the conversation window: it exists framed and resizable,
+stays hidden until opened, draws the Chat / Shell / Task tabs, round-trips its
+threads through a temp file, stages escalations without dispatching, drives
+approval cards, and relays recognized speech without ever dispatching on
+recognition alone. The pure thread-store module has its own unit tests:
+`node --test tests/threads-store.test.js`.
