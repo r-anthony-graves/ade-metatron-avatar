@@ -98,3 +98,35 @@ test('the stub flag matches what the branch actually does', () => {
   assert.deepEqual(wrong, [], 'stub flag disagrees with the branch: ' + wrong.join(', '));
   assert.ok(names.length > 0, 'no command branches found at all');
 });
+
+/* ---------------------------------------------------- shape of the chain */
+
+test('every push() target that looks like the active tab IS activeTab', () => {
+  /* `push(activeAb, ...)` appeared 19 times and activeAb is declared nowhere,
+     so those branches threw ReferenceError instead of printing. A typo in an
+     identifier that only runs when a human types that one command is invisible
+     until someone types it. */
+  const bad = [];
+  const re = /push\(\s*(active[A-Za-z]*)\s*,/g;
+  let m;
+  while ((m = re.exec(SRC))) {
+    if (m[1] !== 'activeTab') bad.push(m[1]);
+  }
+  assert.deepEqual([...new Set(bad)].sort(), [],
+    'push() called with an undeclared tab identifier: ' + [...new Set(bad)].join(', '));
+});
+
+test('no command branch compares against more than one word', () => {
+  /* cmd is parts[0] -- a single word -- so `cmd === 'persona reload'` can never
+     be true. Three such branches shipped and were unreachable; sub-verbs have
+     to be read out of `args`. */
+  /* Anchored on the branch OPENER, like branchNames() -- an unanchored
+     `cmd === '...'` also matches prose, and the first version of this guard
+     failed on the comment that explains the bug. */
+  const bad = [];
+  const re = /if \(cmd === '([a-z]+ [^']*)'\)/g;
+  let m;
+  while ((m = re.exec(SRC))) bad.push(m[1]);
+  assert.deepEqual(bad, [],
+    'unreachable multi-word branch (cmd is one word): ' + bad.join(', '));
+});

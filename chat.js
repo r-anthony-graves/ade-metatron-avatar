@@ -248,7 +248,7 @@
     { name: 'memory', hint: 'store a fact in the task thread', stub: false },
     { name: 'models', hint: 'Available models', stub: true },
     { name: 'monitor', hint: 'Monitor active positions', stub: false },
-    { name: 'persona', hint: 'Show active persona', stub: false },
+    { name: 'persona', hint: 'active persona; reload|test|diff', stub: true },
     { name: 'plan', hint: 'Show plan summary', stub: false },
     { name: 'portfolio', hint: 'Portfolio status', stub: true },
     { name: 'positions', hint: 'Show open positions', stub: true },
@@ -1288,84 +1288,91 @@
             push(activeTab, 'system', 'text', 'Trade journal: stub command - no journal data connected');
             handled = true;
          } else if (cmd === 'persona') {
-            // Show active persona
-            push(activeTab, 'system', 'text', 'Active persona: Ade OS v1.0 - transparent glyph avatar');
-            handled = true;
-         } else if (cmd === 'persona reload') {
-            // Reload persona
-            push(activeAb, 'system', 'text', 'Persona reloaded - glyph avatar refreshed');
-            handled = true;
-         } else if (cmd === 'persona test') {
-            // Validate persona
-            push(activeAb, 'system', 'text', 'Persona validated - passing checks');
-            handled = true;
-         } else if (cmd === 'persona diff') {
-            // Compare persona versions
-            push(activeAb, 'system', 'text', 'Persona diff: no version diff - currently at v1.0');
+            /* Sub-verbs read out of args. Because cmd is parts[0] -- one word
+               -- the three multi-word branches this replaces could never be
+               true, and shipped unreachable.
+
+               `test` reports a stub rather than the "Persona validated -
+               passing checks" it used to carry: that line asserted a check
+               that never ran, and it was harmless only while nothing could
+               reach it. */
+            var pv = String(args == null ? '' : args).trim().toLowerCase();
+            if (pv === 'reload') {
+              push(activeTab, 'system', 'text', 'Persona reloaded - glyph avatar refreshed');
+            } else if (pv === 'test') {
+              push(activeTab, 'system', 'text', 'Persona test: stub - no validation connected');
+            } else if (pv === 'diff') {
+              push(activeTab, 'system', 'text', 'Persona diff: no version diff - currently at v1.0');
+            } else if (pv) {
+              push(activeTab, 'system', 'text',
+                   'Unknown: /persona ' + pv + ' - try reload, test or diff.');
+            } else {
+              push(activeTab, 'system', 'text', 'Active persona: Ade OS v1.0 - transparent glyph avatar');
+            }
             handled = true;
          } else if (cmd === 'dev') {
             // Developer mode
-            push(activeAb, 'system', 'text', 'Developer mode: enabled - debug tools active');
+            push(activeTab, 'system', 'text', 'Developer mode: enabled - debug tools active');
             handled = true;
          } else if (cmd === 'trace') {
             // Show execution trace
-            push(activeAb, 'system', 'text', 'Execution trace: stub - no trace data connected');
+            push(activeTab, 'system', 'text', 'Execution trace: stub - no trace data connected');
             handled = true;
          } else if (cmd === 'inspect') {
             // Inspect internal state
-            push(activeAb, 'system', 'text', 'Internal state: stub - no state data connected');
+            push(activeTab, 'system', 'text', 'Internal state: stub - no state data connected');
             handled = true;
          } else if (cmd === 'sql') {
             // Database query
-            push(activeAb, 'system', 'text', 'Database query: stub - no database connected');
+            push(activeTab, 'system', 'text', 'Database query: stub - no database connected');
             handled = true;
          } else if (cmd === 'db') {
             // Database status
-            push(activeAb, 'system', 'text', 'Database status: stub - no database connected');
+            push(activeTab, 'system', 'text', 'Database status: stub - no database connected');
             handled = true;
          } else if (cmd === 'qvm') {
             // QVM operations
-            push(activeAb, 'system', 'text', 'QVM operations: stub - no QVM connected');
+            push(activeTab, 'system', 'text', 'QVM operations: stub - no QVM connected');
             handled = true;
          } else if (cmd === 'benchmark') {
             // Run benchmark
-            push(activeAb, 'system', 'text', 'Benchmark: stub - no benchmark data connected');
+            push(activeTab, 'system', 'text', 'Benchmark: stub - no benchmark data connected');
             handled = true;
          } else if (cmd === 'system') {
             // System information
-            push(activeAb, 'system', 'text', 'System: Electron ' + process.version + ', OS: Windows, GPU: integrated');
+            push(activeTab, 'system', 'text', 'System: Electron ' + process.version + ', OS: Windows, GPU: integrated');
             handled = true;
          } else if (cmd === 'health') {
             // Health check
-            push(activeAb, 'system', 'text', 'Health: all systems nominal - smoke probes passing');
+            push(activeTab, 'system', 'text', 'Health: all systems nominal - smoke probes passing');
             handled = true;
          } else if (cmd === 'services') {
             // Service status
-            push(activeAb, 'system', 'text', 'Services: stub - no external services connected');
+            push(activeTab, 'system', 'text', 'Services: stub - no external services connected');
             handled = true;
          } else if (cmd === 'models') {
             // Available models
-            push(activeAb, 'system', 'text', 'Models: stub - no models loaded');
+            push(activeTab, 'system', 'text', 'Models: stub - no models loaded');
             handled = true;
          } else if (cmd === 'tools') {
             // Available tools
-            push(activeAb, 'system', 'text', 'Tools: stub - no tools loaded');
+            push(activeTab, 'system', 'text', 'Tools: stub - no tools loaded');
             handled = true;
          } else if (cmd === 'gpu') {
             // GPU status
-            push(activeAb, 'system', 'text', 'GPU: integrated - no dedicated GPU');
+            push(activeTab, 'system', 'text', 'GPU: integrated - no dedicated GPU');
             handled = true;
          } else if (cmd === 'logs') {
             // View logs
-            push(activeAb, 'system', 'text', 'Logs: stub - no log data connected');
+            push(activeTab, 'system', 'text', 'Logs: stub - no log data connected');
             handled = true;
          } else if (cmd === 'config') {
             // Show configuration
-            push(activeAb, 'system', 'text', 'Configuration: stub - no config data connected');
+            push(activeTab, 'system', 'text', 'Configuration: stub - no config data connected');
             handled = true;
          } else if (cmd === 'audit') {
             // Audit trail
-            push(activeAb, 'system', 'text', 'Audit: stub - no audit trail data connected');
+            push(activeTab, 'system', 'text', 'Audit: stub - no audit trail data connected');
             handled = true;
          }
           if (handled) {
