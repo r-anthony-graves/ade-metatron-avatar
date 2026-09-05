@@ -1067,6 +1067,34 @@
             // Compare persona versions
             push(activeAb, 'system', 'text', 'Persona diff: no version diff - currently at v1.0');
             handled = true;
+         } else if (cmd === 'dev') {
+            // Developer mode
+            push(activeAb, 'system', 'text', 'Developer mode: enabled - debug tools active');
+            handled = true;
+         } else if (cmd === 'trace') {
+            // Show execution trace
+            push(activeAb, 'system', 'text', 'Execution trace: stub - no trace data connected');
+            handled = true;
+         } else if (cmd === 'inspect') {
+            // Inspect internal state
+            push(activeAb, 'system', 'text', 'Internal state: stub - no state data connected');
+            handled = true;
+         } else if (cmd === 'sql') {
+            // Database query
+            push(activeAb, 'system', 'text', 'Database query: stub - no database connected');
+            handled = true;
+         } else if (cmd === 'db') {
+            // Database status
+            push(activeAb, 'system', 'text', 'Database status: stub - no database connected');
+            handled = true;
+         } else if (cmd === 'qvm') {
+            // QVM operations
+            push(activeAb, 'system', 'text', 'QVM operations: stub - no QVM connected');
+            handled = true;
+         } else if (cmd === 'benchmark') {
+            // Run benchmark
+            push(activeAb, 'system', 'text', 'Benchmark: stub - no benchmark data connected');
+            handled = true;
          } else if (cmd === 'system') {
             // System information
             push(activeAb, 'system', 'text', 'System: Electron ' + process.version + ', OS: Windows, GPU: integrated');
