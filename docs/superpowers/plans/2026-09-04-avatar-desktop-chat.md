@@ -601,6 +601,8 @@ git commit -m "feat(avatar): hidden desktop chat window with three persistent ta
 
 ---
 
+### Task 1: Persistent threads (pure Node module, unit-tested)
+
 **Files:**
 - Create: `threads-store.js`
 - Test: `tests/threads-store.test.js`
