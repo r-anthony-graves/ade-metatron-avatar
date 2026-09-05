@@ -131,7 +131,10 @@ Two windows in one Electron process (the tray keeps the app alive either way):
   writer, no concurrent file access.
 - **Corrupt file at load:** start empty, rename the bad file to
   `threads.json.bak` (never overwrite or delete data silently).
-- No message cap (decision: persist across restarts, uncapped).
+- No message cap in normal use (decision: persist across restarts, uncapped).
+  The store keeps one hard safety floor so a runaway renderer cannot balloon
+  the file: `saveThreads` trims each tab to its most recent 4,000 messages
+  (`MAX_MESSAGES = 4000`).
 
 ## Data flow — sending
 
