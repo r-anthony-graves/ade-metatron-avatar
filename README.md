@@ -45,6 +45,8 @@ tab's default. The prefixes still override at every turn:
 | Shell tab, or `!git status` | `POST /v1/terminal` — direct subprocess |
 | `?what brain are you on` | `POST /v1/chat/completions` — plain chat, no roots read |
 
+**Drop files or folders straight onto the window** in any tab — same walk, same report.
+
 Bare text used to dispatch a coding Task the instant you pressed Enter. It asks
 now: `/v1/ask` either answers directly or — for anything that looks like a
 change — does nothing and hands back what it would run, which lands in the Task

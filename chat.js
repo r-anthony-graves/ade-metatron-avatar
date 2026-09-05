@@ -606,6 +606,35 @@
   }
   window.__handleUpload = handleUpload;
 
+  /* ------------------------------------------------------- drag and drop */
+  /* The chat window is opaque and framed, so an OS drag always lands HERE --
+     the glyph is click-through wherever it is not painted, so `/upload` in
+     the window and the native picker are the only reliable paths there.
+     A dropped path still comes from webUtils in the preload (`B.dropPaths`);
+     Electron 32 removed `File.path`, so the page cannot learn a path by
+     itself, and nothing leafs the bridge but strings. */
+  window.addEventListener('dragover', function (e) {
+    e.preventDefault();               /* never let the page navigate to a drop */
+    e.dataTransfer.dropEffect = 'copy';
+    document.body.classList.add('dropping');
+  });
+  window.addEventListener('dragleave', function () {
+    document.body.classList.remove('dropping');
+  });
+  window.addEventListener('drop', function (e) {
+    e.preventDefault();
+    document.body.classList.remove('dropping');
+    if (busy || !B) return;
+    var paths = B.dropPaths(e.dataTransfer && e.dataTransfer.files);
+    if (!paths.length) {
+      push(activeTab, 'ade', 'error',
+        'Nothing droppable there. Use /upload to pick files, or /upload folder for a directory.');
+      return;
+    }
+    void doUpload(paths, false);
+  });
+  window.__dropPaths = function (files) { return B ? B.dropPaths(files) : []; };
+
   /* ---------------------------------------------------------- approvals */
   /* An undecided approval is a card in the Task tab. The glyph's amber
      pending look is glyph.js reading state.pending -- this window only owns
