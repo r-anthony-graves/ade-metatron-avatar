@@ -1343,8 +1343,46 @@
             push(activeTab, 'system', 'text', 'System: Electron ' + process.version + ', OS: Windows, GPU: integrated');
             handled = true;
          } else if (cmd === 'health') {
-            // Health check
-            push(activeTab, 'system', 'text', 'Health: all systems nominal - smoke probes passing');
+            /* Reads Ade OS. The literal this replaces answered "all systems
+               nominal - smoke probes passing" unconditionally, and went on
+               saying it for the hour chat.js could not parse: a status line
+               that cannot fail is worse than none, because it is trusted
+               exactly when it is wrong.
+
+               Reports every subsystem Ade OS names, up or down, rather than
+               reducing them to one word -- `status: down` with memory up and
+               inference unreachable is a different morning from both being
+               out, and the detail strings say which. */
+            push(activeTab, 'system', 'text', 'Asking Ade OS...');
+            B.call('/v1/health').then(function (r) {
+              if (!r || !r.ok) {
+                push(activeTab, 'system', 'text',
+                     'Ade OS did not answer /v1/health - ' +
+                     ((r && r.error) ? r.error
+                      : (r && r.status) ? ('HTTP ' + r.status) : 'no reply') +
+                     '. That IS the health answer: the API is unreachable.');
+                return;
+              }
+              var d = r.data || {};
+              var out = ['Ade OS: ' + (d.status || 'unknown')];
+              var subs = d.subsystems || {};
+              for (var k in subs) {
+                if (!Object.prototype.hasOwnProperty.call(subs, k)) continue;
+                var sub = subs[k] || {};
+                out.push('  ' + k + ': ' + (sub.up ? 'up' : 'DOWN') +
+                         (sub.detail ? ' - ' + sub.detail : ''));
+              }
+              if (d.may_execute_tools === false) {
+                out.push('  tools BLOCKED: ' + (d.blocking_reason || 'no reason given'));
+              }
+              /* String.fromCharCode(10) rather than an escape: this file is
+                 patched by tooling often enough that a lone backslash-n has
+                 been mangled into a real line break more than once today. */
+              push(activeTab, 'system', 'text', out.join(String.fromCharCode(10)));
+            }).catch(function (e) {
+              push(activeTab, 'system', 'text',
+                   'Health check failed: ' + ((e && e.message) ? e.message : 'unknown error'));
+            });
             handled = true;
          } else if (cmd === 'services') {
             // Service status

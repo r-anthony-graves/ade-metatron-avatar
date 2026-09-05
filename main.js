@@ -1357,6 +1357,33 @@ function startSmokeRun() {
         && clearArchive.restorePopsArchive;
     } catch (e) { clearArchive = { error: String((e && e.message) || e) }; }
 
+    /* /health end to end: renderer -> ade:call -> the real :8300. Asserts the
+       reply carries what Ade OS SAID (a status word and a named subsystem)
+       rather than a sentence this file could have written by itself. */
+    let healthCmd = {};
+    try {
+      const js = (s2) => chatWin.webContents.executeJavaScript(s2);
+      await js('(function(){ window.__setTab("chat"); var t=window.__threads();'
+        + ' t.chat.length = 0; })(),0');
+      await js('(function(){ var i=document.getElementById("in"); i.value="/health";'
+        + ' i.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));'
+        + ' })(),0');
+      await new Promise((r) => setTimeout(r, 2500));   /* a real round trip */
+      const said = await js('(function(){ var t=window.__threads().chat;'
+        + ' return t.map(function(m){ return m.text; }).join(" | "); })()');
+      healthCmd.said = String(said).slice(0, 240);
+      healthCmd.asked = said.indexOf('Asking Ade OS') !== -1;
+      healthCmd.namedStatus = /Ade OS: (up|down|unknown)/.test(said)
+        || said.indexOf('did not answer') !== -1;
+      /* memory / inference are Ade OS's own subsystem names -- this file never
+         writes them, so their presence proves the reply came from the API */
+      healthCmd.namedSubsystem = /memory:|inference:/.test(said)
+        || said.indexOf('did not answer') !== -1;
+      healthCmd.notCanned = !/nominal/i.test(said);
+      healthCmd.ok = healthCmd.asked && healthCmd.namedStatus
+        && healthCmd.namedSubsystem && healthCmd.notCanned;
+    } catch (e) { healthCmd = { error: String((e && e.message) || e) }; }
+
     /* Retry on failure (spec Error handling): a failed call stages the ORIGINAL
        line back into the input so Enter is the retry action. */
     let retryChat = {};
@@ -1513,6 +1540,7 @@ function startSmokeRun() {
       askChat,
       cmdPopup,
       clearArchive,
+      healthCmd,
       retryChat,
       smsApproval,
       dropChat,

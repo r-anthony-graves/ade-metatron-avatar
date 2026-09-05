@@ -20,6 +20,14 @@ const path = require('path');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'chat.js'), 'utf8');
 
+/* Block and line comments out, so a guard checks CODE and not the prose that
+   explains it. Crude on purpose -- it only has to be right about the command
+   bodies in this one file, and a real parser here would be a second thing to
+   keep correct. */
+function stripComments(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+}
+
 /* Branch openers: `if (cmd === 'name') {` and `} else if (cmd === 'name') {`. */
 function branchNames() {
   const out = [];
@@ -129,4 +137,24 @@ test('no command branch compares against more than one word', () => {
   while ((m = re.exec(SRC))) bad.push(m[1]);
   assert.deepEqual(bad, [],
     'unreachable multi-word branch (cmd is one word): ' + bad.join(', '));
+});
+
+test('/health measures instead of asserting', () => {
+  /* It used to answer "Health: all systems nominal - smoke probes passing" --
+     a string, not a reading. It said exactly that during the hour chat.js
+     could not parse, which is the whole argument against canned status: the
+     one time you need it, it is confidently wrong.
+
+     The guard is that the branch actually reaches Ade OS. Falsifiable: swap
+     the call back for a literal and this fails. */
+  const m = /\} else if \(cmd === 'health'\) \{([\s\S]*?)\n         \} else if/.exec(SRC);
+  assert.ok(m, "could not find the /health branch");
+  const body = m[1];
+  assert.ok(body.indexOf("'/v1/health'") !== -1,
+    '/health does not call /v1/health -- it is asserting, not measuring');
+  /* Comments stripped first. A guard that reads prose fires on the very
+     comment explaining the bug it guards -- this one and the multi-word guard
+     both did exactly that before being anchored properly. */
+  assert.ok(!/nominal/i.test(stripComments(body)),
+    '/health still claims "nominal" from a literal');
 });
