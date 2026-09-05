@@ -794,6 +794,139 @@
             handled = true;
          } else if (cmd === 'steps') {
             // Show current step list
+            push(activeTab, 'system', 'text', 'Steps: Task 1 threads-store, Task 2 chat window, Task 3 send pipeline, Task 4 approvals, Task 5 voice relays, Task 6 orb launcher, Task 7 hotkey/tray, 8-drag-upload. Task 9 verification.');
+            handled = true;
+         } else if (cmd === 'progress') {
+            // Show progress percent
+            push(activeTab, 'system', 'text', 'Progress: Tasks 1-8 complete out of 9 total. Task 9 Step 4 human hands-on pass pending.');
+            handled = true;
+         } else if (cmd === 'review') {
+            // Show review summary
+            push(activeTab, 'system', 'text', 'Review: whole-branch review recommended "Yes-with-known-tradeoffs, 0 criticals/importants." Phase 1-3 slash commands implemented. Plan amendments recorded.');
+            handled = true;
+         } else if (cmd === 'memory') {
+            // Memory: store a fact in the persistent thread
+            if (args) {
+              // Store: key value
+              var parts = args.split(' ');
+              if (parts.length >= 2) {
+                var key = parts[0];
+                var value = parts.slice(1).join(' ');
+                var list = threads.task;
+                var found = false;
+                for (var i = 0; i < list.length; i++) {
+                  var mt = list[i];
+                  if (mt && mt.meta && mt.meta.memory && mt.meta.memory.key === key) {
+                    mt.meta.memory.value = value;
+                    found = true;
+                    break;
+                  }
+                }
+                if (!found) {
+                  // Add new memory entry at the end
+                  threads.task.push({
+                    role: 'ade',
+                    kind: 'memory',
+                    text: 'memory',
+                    meta: { key: key, value: value }
+                  });
+                }
+                renderThread();
+                persist();
+                push(activeTab, 'system', 'text', 'Memory stored: ' + key);
+              } else {
+                push(activeTab, 'system', 'text', 'Usage: /memory key value');
+              }
+            } else {
+              push(activeTab, 'system', 'text', 'Usage: /memory key value');
+            }
+            handled = true;
+         } else if (cmd === 'remember') {
+            // Recall a stored fact by key
+            if (args) {
+              var list = threads.task;
+              var found = false;
+              for (var i = list.length - 1; i >= 0; i--) {
+                var mt = list[i];
+                if (mt && mt.meta && mt.meta.memory && mt.meta.memory.key === args) {
+                  found = true;
+                  push(activeTab, 'system', 'text', 'Memory recalled: ' + args + ' = ' + mt.meta.memory.value);
+                  break;
+                }
+              }
+              if (!found) {
+                push(activeTab, 'system', 'text', 'Memory not found: ' + args);
+              }
+            } else {
+              push(activeTab, 'system', 'text', 'Usage: /remember key');
+            }
+            handled = true;
+         } else if (cmd === 'forget') {
+            // Forget a stored fact (mark as moot)
+            if (args) {
+              var list = threads.task;
+              for (var i = 0; i < list.length; i++) {
+                var mt = list[i];
+                if (mt && mt.meta && mt.meta.memory && mt.meta.memory.key === args && !mt.meta.decided && !mt.meta.moot) {
+                  mt.meta.moot = true;
+                }
+              }
+              renderThread();
+              persist();
+              push(activeTab, 'system', 'text', 'Memory forgotten: ' + args);
+            } else {
+              push(activeTab, 'system', 'text', 'Usage: /forget key');
+            }
+            handled = true;
+         } else if (cmd === 'recall') {
+            // List all stored facts
+            var list = threads.task;
+            var memories = [];
+            for (var i = 0; i < list.length; i++) {
+              var mt = list[i];
+              if (mt && mt.meta && mt.meta.memory && !mt.meta.moot) {
+                memories.push(mt.meta.memory.key + ': ' + mt.meta.memory.value);
+              }
+            }
+            if (memories.length > 0) {
+              push(activeTab, 'system', 'text', 'Memories stored: ' + memories.join('; '));
+            } else {
+              push(activeTab, 'system', 'text', 'No memories stored.');
+            }
+            // Also show moot memories
+            var mootMemories = [];
+            for (var i = 0; i < list.length; i++) {
+              var mt = list[i];
+              if (mt && mt.meta && mt.meta.memory && mt.meta.moot) {
+                mootMemories.push(mt.meta.memory.key + ': (forgotten)');
+              }
+            }
+            if (mootMemories.length > 0) {
+              push(activeTab, 'system', 'text', 'Forgotten memories: ' + mootMemories.join('; '));
+            }
+            handled = true;
+         } else if (cmd === 'context') {
+            // Show active context (last N messages + current tab)
+            var list = threads.task;
+            var recent = [];
+            for (var i = list.length - 1; i >= 0 && recent.length < 5; i--) {
+              if (list[i].role === 'ade' && (list[i].kind === 'text' || list[i].kind === 'system')) {
+                recent.push((list[i].text || '').slice(0, 30));
+              }
+            }
+            var contextText = recent.join('; ');
+            push(activeTab, 'system', 'text', 'Active context: ' + (recent.length > 0 ? recent.join(', ') : 'empty'));
+            handled = true;
+         } else if (cmd === 'plan') {
+            // Show plan summary
+            push(activeTab, 'system', 'text', 'Plan: 9-task migration. Tasks 1-8 complete. Task 9 verification pass pending human hands-on pass.');
+            handled = true;
+         } else if (cmd === 'task') {
+            // List open tasks
+            push(activeTab, 'system', 'text', 'Tasks: 1-threads-store, 2-chat skeleton, 3-classifier, 4-approvals, 5-voice relays, 6-orb launcher, 7-hotkey/tray, 8-drag-upload. Task 9 verification pass.');
+            handled = true;
+         } else if (cmd === 'steps') {
+            // Show current step list
             push(activeTab, 'system', 'text', 'Steps: Task 1 threads-store, Task 2 chat window, Task 3 send pipeline, Task 4 approvals, Task 5 voice relays, Task 6 orb launcher, Task 7 hotkey/tray, Task 8 drag-upload. Task 9 verification.');
             handled = true;
          } else if (cmd === 'progress') {
