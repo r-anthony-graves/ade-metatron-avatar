@@ -1,10 +1,10 @@
-/* The avatar's orb renderer: drag it, talk to it. The command surface has
- * moved into the chat window (chat.js); THIS window now owns only
- *   - drag / click / click-through hit logic
+/* The avatar's orb renderer: drag it, single-click it to open the desktop
+ * conversation window. The command surface lives in the chat window (chat.js);
+ * THIS window owns only
+ *   - drag / single-click / click-through hit logic
  *   - the live microphone, push-to-talk, and the wake gate   (ptt.js)
  *   - Ade's spoken replies: the ONE audio engine, and the glyph's mouth
- * and RELAYS recognised speech to the chat window through main. Classify,
- * dispatch, approvals, skills and upload live in chat.js, never here.
+ * and RELAYS recognised speech to the chat window through main.
  */
 'use strict';
 (function () {
@@ -12,10 +12,6 @@
   var cvs = document.getElementById('glyph');
 
   /* -------------------------------------------------------------- speech */
-  /* Ade's reply is decoded from base64 WAV straight into Web Audio -- no blob
-     URL, so the page keeps its `default-src 'none'` policy. The playing signal
-     also drives the glyph, which is what gives the avatar a mouth. chat.js
-     asks main to relay a "speak" event here; this is the only decoder. */
   var actx = null, speakSrc = null, speakAn = null, speakRaf = 0, speakBuf = null;
 
   function stopSpeaking() {
@@ -74,9 +70,21 @@
     if (B) B.dragStart();
     e.preventDefault();
   });
+  /* A click (no drag) makes the orb the launcher: it opens the chat window. */
+  window.addEventListener('mouseup', function () {
+    if (!down) return;
+    var wasClick = down.moved <= 3;
+    down = null;
+    if (B) B.dragEnd();
+    if (wasClick && B) B.openChat();
+  });
   /* ------------------------------------------------------------ hit area */
-  var HIT_ALPHA = 48;        /* measured off smoke.png: the backing halo is gone by here */
-  var HIT_PAD = 5;           /* a one-pixel line still has to be grabbable */
+  /* The window is a rectangle; the orb is not. Only about a third of it is
+     ever painted, and the transparent remainder used to swallow every click
+     meant for the window underneath. Report what is actually under the cursor
+     and let main.js hand the rest back. */
+  var HIT_ALPHA = 48;
+  var HIT_PAD = 5;
   var hitOn = null, hitAt = 0;
   var probe = cvs.getContext('2d');
 
@@ -94,45 +102,22 @@
   }
   function setHit(on) { if (on !== hitOn) { hitOn = on; if (B) B.hit(on); } }
 
-  var bar = document.getElementById('bar');     /* deleted in Task 6 */
   window.addEventListener('mousemove', function (e) {
     if (down) {
-      setHit(true);                   /* never drop a drag that wanders off the lines */
+      setHit(true);
       down.moved = Math.max(down.moved, Math.abs(e.screenX - down.x) + Math.abs(e.screenY - down.y));
       if (down.moved > 3 && B) B.dragMove();
       return;
     }
-    if (bar && bar.classList.contains('open')) { setHit(true); return; }
     var now = Date.now();
     if (now - hitAt < 16) return;
     hitAt = now;
     setHit(painted(e.clientX, e.clientY));
   });
   document.addEventListener('mouseout', function (e) {
-    if (!e.relatedTarget && !down && !(bar && bar.classList.contains('open'))) setHit(false);
-  });
-  window.addEventListener('mouseup', function () {
-    if (!down) return;
-    var wasClick = down.moved <= 3;
-    down = null;
-    if (B) B.dragEnd();
-    if (wasClick) toggleBar();         /* Task 6 turns this into B.openChat() */
+    if (!e.relatedTarget && !down) setHit(false);
   });
   cvs.addEventListener('contextmenu', function (e) { e.preventDefault(); if (B) B.menu(); });
-
-  /* ------------------------------------------------------ bar shim (temp) */
-  /* The bar DOM survives until Task 6. Nothing in it can send any more; keeping
-     its open/closed state is what lets --smoke's hit probe pass in between. */
-  function toggleBar(force) {
-    if (!bar) return;
-    var open = force === undefined ? !bar.classList.contains('open') : !!force;
-    bar.classList.toggle('open', open);
-    if (B) B.bar(open);
-    if (open) { var inp = document.getElementById('in'); if (inp) inp.focus(); }
-    else setHit(false);
-  }
-  window.__toggleBar = toggleBar;
-  if (B) B.onToggleBar(function () { toggleBar(); });
 
   /* ------------------------------------------------------- voice control */
   /* The microphone and the wake gate stay here; the UI they produce lives in
@@ -146,16 +131,10 @@
   }
   window.__stripWake = stripWake;    /* --smoke reaches it here */
 
-  /* One utterance from the open microphone. Everything not addressed to Ade is
-     dropped here, before any classification and before anything could be staged
-     or dispatched. */
   function onUtterance(u) {
     if (!u || !u.text) return;
     var command = stripWake(u.text);
     if (command === null) return;                  /* not for us: discard */
-    /* It was for us. Flare NOW rather than when the answer comes back: this is
-       the only acknowledgement that can land while the sentence is still being
-       recognised. */
     if (window.GLYPH && window.GLYPH.wake) window.GLYPH.wake();
     if (B) B.saySpeech({ text: command, engine: u.engine || '', empty: !command });
   }
@@ -176,7 +155,7 @@
     if (!r.text) { if (B) B.saySpeech({ empty: true, text: '' }); return; }
     if (B) B.saySpeech({ text: r.text, engine: r.engine || '' });
   }
-  window.__pttUp = pttUp;   /* --smoke drives the real path with a stubbed PTT here */
+  window.__pttUp = pttUp;
 
   /* ------------------------------------------------------ Ade's state in */
   if (B) {
@@ -189,18 +168,9 @@
     B.onBacking(function (on) { if (window.GLYPH) window.GLYPH.setBacking(on); });
 
     /* ------------------------------------------------ the live mic */
-    /* Live at launch, per Ray. `mic` defaults TRUE when the key is absent so a
-       fresh install behaves as asked; the tray toggle writes it. */
     function setMicUi() {
       var live = window.PTT && window.PTT.isLive && window.PTT.isLive();
       if (window.GLYPH && window.GLYPH.setMic) window.GLYPH.setMic(live ? 1 : 0);
-      var micBtn = document.getElementById('mic');     /* bar; deleted Task 6 */
-      if (micBtn) {
-        micBtn.textContent = live ? 'Mute' : 'Unmute';
-        micBtn.classList.toggle('muted', !live);
-        micBtn.title = live ? 'The microphone is open. Click to stop the track.'
-                            : 'The microphone track is stopped. Click to reopen.';
-      }
       if (B) B.micState(!!live);
     }
     window.__setMicUi = setMicUi;
@@ -218,16 +188,6 @@
     window.__micToggle = micToggle;
     B.onMicToggle(function () { void micToggle(); });
 
-    /* The hint names the key that actually bound (lives in the chat window
-       hint from Task 2 on; the glyph bar's copy is deleted with the bar). */
-    var PRETTY_KEY = { Control: 'Ctrl', Super: 'Win' };
-    B.shortcuts().then(function (k) {
-      var el = document.getElementById('talkKey');
-      if (!el) return;
-      el.textContent = (k && k.talk)
-        ? String(k.talk).split('+').map(function (t) { return PRETTY_KEY[t] || t; }).join('+')
-        : 'tray menu';
-    });
     B.config().then(function (c) {
       if (c && c.mic !== false) { void micOn(); } else { setMicUi(); }
       if (c && window.GLYPH) window.GLYPH.setBacking(c.backing !== false);

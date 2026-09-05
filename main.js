@@ -22,12 +22,11 @@ const { loadThreads, saveThreads } = require('./threads-store');
 
 const ADE_BASE = process.env.ADEOS_URL || 'http://127.0.0.1:8300';
 const SMOKE = process.argv.includes('--smoke');
-const BAR_H = 108;                       /* the command bar lives under the glyph */
 const CFG_PATH = () => path.join(app.getPath('userData'), 'avatar-state.json');
 
 let win = null, tray = null, timer = null, dragAnchor = null;
 let chatWin = null;                 /* the desktop conversation window */
-let overPaint = false, barOpen = false, lastIgnore = null;
+let overPaint = false, lastIgnore = null;
 let cfg = { x: null, y: null, size: 380, clickThrough: false, speak: false, opacity: 1, backing: true, mic: true,
             chatX: null, chatY: null, chatW: 900, chatH: 620 };
 let micLive = false;   /* what the renderer last reported, for the tray label */
@@ -256,21 +255,19 @@ async function pollAde() {
 }
 
 /* ------------------------------------------------------------- hit area */
-/* Windows gives a transparent window a RECTANGULAR hit region, so all
-   460x568 of it swallow the mouse -- but only about a third of that
-   rectangle is ever painted. Sitting over another window, the invisible
-   remainder eats its clicks, and the app underneath looks frozen.
-
-   Focus is the same mistake twice: nothing here ever handed the foreground
-   back, so one click on the glyph left keystrokes going into a frameless,
-   taskbar-less window with nothing focused in it. Only the command bar has
-   any use for the keyboard, so only the command bar may take the foreground. */
+/* Windows gives a transparent window a RECTANGULAR hit region, so all of
+   S x S swallows the mouse -- but only about a third of that square is ever
+   painted. Sitting over another window, the invisible remainder eats its
+   clicks, and the app underneath looks frozen. The orb itself never takes
+   the keyboard: every keypress belongs to the chat window or the app behind
+   the transparent bits. The only dynamic is the mouse -- handed back
+   anywhere the orb is not painted. */
 function applyHit() {
   if (!win || win.isDestroyed()) return;
-  const wants = !cfg.clickThrough && (overPaint || barOpen);
+  const wants = !cfg.clickThrough && overPaint;
   lastIgnore = !wants;
   win.setIgnoreMouseEvents(lastIgnore, { forward: true });
-  win.setFocusable(barOpen);
+  win.setFocusable(false);
   win.setAlwaysOnTop(true, 'screen-saver');   /* setFocusable rebuilds the styles */
 }
 
@@ -292,15 +289,15 @@ function createWindow() {
   const S = cfg.size;
   const area = screen.getPrimaryDisplay().workArea;
   let x = cfg.x == null ? area.x + area.width - S - 48 : cfg.x;
-  let y = cfg.y == null ? area.y + area.height - (S + BAR_H) - 48 : cfg.y;
-  const fitted = clampToScreen(x, y, S, S + BAR_H);
+  let y = cfg.y == null ? area.y + area.height - S - 48 : cfg.y;
+  const fitted = clampToScreen(x, y, S, S);
   if (fitted.x !== x || fitted.y !== y) {
     x = fitted.x; y = fitted.y;
     cfg.x = x; cfg.y = y; saveCfg();     /* remember the corrected spot, not the lost one */
   }
 
   win = new BrowserWindow({
-    width: S, height: S + BAR_H, x, y,
+    width: S, height: S, x, y,
     frame: false, transparent: true, backgroundColor: '#00000000',
     resizable: false, minimizable: false, maximizable: false, fullscreenable: false,
     skipTaskbar: true, hasShadow: false, alwaysOnTop: true, acceptFirstMouse: true,
@@ -406,7 +403,7 @@ function buildMenu() {
     {
       label: 'Size', submenu: [280, 340, 380, 460, 560].map(px => ({
         label: px + ' px', type: 'radio', checked: cfg.size === px,
-        click: () => { cfg.size = px; saveCfg(); if (win) { win.setSize(px, px + BAR_H); win.webContents.send('ui:size', px); } }
+        click: () => { cfg.size = px; saveCfg(); if (win) { win.setSize(px, px); win.webContents.send('ui:size', px); } }
       }))
     },
     {
@@ -521,13 +518,6 @@ ipcMain.on('win:dragEnd', () => {
 /* The renderer is the only thing that knows where the glyph actually is, so
    it reports whether the cursor is on painted pixels and main acts on it. */
 ipcMain.on('win:hit', (_e, on) => { overPaint = !!on; applyHit(); });
-ipcMain.on('win:bar', (_e, open) => {
-  barOpen = !!open;
-  applyHit();
-  if (!win || win.isDestroyed()) return;
-  if (barOpen) win.focus();
-  else win.blur();                     /* hand the keyboard back to whatever had it */
-});
 ipcMain.on('app:menu', () => tray && tray.popUpContextMenu(buildMenu()));
 ipcMain.on('app:quit', () => app.quit());
 ipcMain.on('app:copy', (_e, text) => clipboard.writeText(String(text || '')));
@@ -637,28 +627,36 @@ function startSmokeRun() {
     let interact = {};
     try {
       interact = JSON.parse(await win.webContents.executeJavaScript(
-        '(function(){ var c=document.getElementById("glyph"), b=document.getElementById("bar");' +
-        ' function fire(t){ c.dispatchEvent(new MouseEvent(t,{bubbles:true,button:0,screenX:10,screenY:10})); }' +
-        ' function up(){ window.dispatchEvent(new MouseEvent("mouseup",{bubbles:true,button:0,screenX:10,screenY:10})); }' +
-        ' var before = b.classList.contains("open"); fire("mousedown"); up();' +
-        ' return JSON.stringify({ barBefore:before, barAfter:b.classList.contains("open"),' +
-        '   hasPTT: typeof window.PTT, bridge: typeof window.adeBridge,' +
-        '   listeners: !!(window.GLYPH && window.GLYPH.setSpeaking) }); })()'
+        '(function(){ var c=document.getElementById("glyph");' +
+        ' c.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,button:0,screenX:10,screenY:10}));' +
+        ' window.dispatchEvent(new MouseEvent("mouseup",{bubbles:true,button:0,screenX:10,screenY:10}));' +
+        ' return JSON.stringify({ hasPTT: typeof window.PTT, bridge: typeof window.adeBridge,' +
+        '   listeners: !!(window.GLYPH && window.GLYPH.setSpeaking),' +
+        '   noBar: !document.getElementById("bar") }); })()'
       ));
-    } catch (e) { interact = { error: String(e && e.message || e) }; }
+      await new Promise((r) => setTimeout(r, 250));   /* chat:open round trip */
+      interact.chatOpened = !!(chatWin && chatWin.isVisible());
+      interact.ok = interact.chatOpened === true
+        && interact.noBar === true
+        && interact.hasPTT === 'object'
+        && interact.bridge === 'object'
+        && interact.listeners === true;
+    } catch (e) { interact = { error: String((e && e.message) || e) }; }
 
     /* The window is a rectangle and the avatar is not, so prove the mouse is
        handed back everywhere the avatar is not drawn -- and, just as much,
        that it is NOT handed back where it is. A click-through window that is
        click-through over its own glyph is just as broken. */
     /* The hint line must name the key that actually bound, and no OS key may
-       have been taken to get one. Both were wrong at once: it advertised
-       Ctrl+Alt+Space while Ctrl+Shift+Space was live, and Alt+Space had been
-       taken from every other application to open the bar. */
+       have been taken to get one. The hint now lives in the chat window (it
+       was a child of the bar, and the bar is gone), so the probe reads it
+       there. Both were wrong at once: it advertised Ctrl+Alt+Space while
+       Ctrl+Shift+Space was live, and Alt+Space had been taken from every other
+       application to open the bar. */
     let keys = {};
     try {
-      const shown = await win.webContents.executeJavaScript(
-        '(document.getElementById("talkKey")||{}).textContent || ""');
+      const kjs = (s) => chatWin.webContents.executeJavaScript(s);
+      const shown = await kjs('(document.getElementById("talkKey")||{}).textContent || ""');
       const plain = (t) => t.split('+').map((p) => (p === 'Ctrl' ? 'Control' : p === 'Win' ? 'Super' : p)).join('+');
       const OS_OWNED = ['Alt+Space', 'Super+Space'];
       keys = {
@@ -689,6 +687,11 @@ function startSmokeRun() {
         return { ok: true, status: 200, data: { stub: true } };
       });
       try {
+        /* the launcher click already opened chatWin earlier in the run, so
+           baseline it closed here: askOpened must prove the SPEECH path
+           opened it, not the orb */
+        await js('window.adeBridge.hideChat(),0');
+        await new Promise((r) => setTimeout(r, 120));
         const rewrites = JSON.parse(await js('JSON.stringify({' +
           ' shell: window.__spokenToTyped("shell git status"),' +
           ' ask: window.__spokenToTyped("ask what brain are you on"),' +
@@ -1053,8 +1056,6 @@ function startSmokeRun() {
             relay is parked for the check so the utterance cannot open the
             chat window or start a real /v1/ask behind this probe's back --
             the flare is what is being measured, not a side effect. */
-      const barBefore = await js('document.getElementById("bar").classList.contains("open")');
-      const inBefore = await js('document.getElementById("in").value');
       ipcMain.removeListener('chat:speech', relayChatSpeech);
       try {
         await js('(function(){ window.__wakeCalls = 0; var w = window.GLYPH.wake;' +
@@ -1069,9 +1070,6 @@ function startSmokeRun() {
       } finally {
         ipcMain.addListener('chat:speech', relayChatSpeech);
       }
-      /* leave the bar exactly as found -- hit's probe below asserts on it */
-      await js('(function(){document.getElementById("in").value=' + JSON.stringify(inBefore) + ';' +
-               ' document.getElementById("bar").classList.toggle("open",' + (barBefore ? 'true' : 'false') + ');})(),0');
 
       hearing.ok = hearing.apiOk === true
                 && hearing.figure.at > 0
@@ -1127,26 +1125,18 @@ function startSmokeRun() {
       const settle = (ms) => new Promise(r => setTimeout(r, ms || 160));
       const move = (x, y) => win.webContents.executeJavaScript(
         'window.dispatchEvent(new MouseEvent("mousemove",{bubbles:true,clientX:' + x + ',clientY:' + y + '})), 0');
-      const click = () => win.webContents.executeJavaScript(
-        '(function(){var c=document.getElementById("glyph");' +
-        'c.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,button:0,screenX:9,screenY:9}));' +
-        'window.dispatchEvent(new MouseEvent("mouseup",{bubbles:true,button:0,screenX:9,screenY:9}));})(), 0');
       const snap = () => ({ ignoresMouse: lastIgnore, focusable: win.isFocusable() });
-      await click(); await settle();          /* interact left the bar open; close it */
-      hit.barClosed = snap();
       await move(4, 4); await settle();
       hit.overCorner = snap();                /* expect ignoresMouse true  */
       await move(230, 190); await settle();
       hit.overGlyph = snap();                 /* expect ignoresMouse false */
       await move(4, 4); await settle();
       hit.offAgain = snap();                  /* expect ignoresMouse true  */
-      await click(); await settle();          /* open the bar: it needs the keyboard */
-      hit.barOpen = snap();                   /* expect focusable true     */
+      hit.glyphNotFocusable = win.isFocusable() === false;
       hit.ok = hit.overCorner.ignoresMouse === true
             && hit.overGlyph.ignoresMouse === false
             && hit.offAgain.ignoresMouse === true
-            && hit.barClosed.focusable === false
-            && hit.barOpen.focusable === true;
+            && hit.glyphNotFocusable === true;
     } catch (e) { hit = { error: String((e && e.message) || e) }; }
 
     /* The probes above may legitimately have opened the chat window and

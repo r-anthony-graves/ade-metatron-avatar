@@ -46,7 +46,6 @@ contextBridge.exposeInMainWorld('adeBridge', {
 
   /* ---- glyph-window events (unchanged) ---- */
   onState: (fn) => ipcRenderer.on('ade:state', (_e, s) => fn(s)),
-  onToggleBar: (fn) => ipcRenderer.on('ui:toggleBar', () => fn()),
   onArm: (fn) => ipcRenderer.on('ui:arm', () => fn()),
   onSize: (fn) => ipcRenderer.on('ui:size', (_e, px) => fn(px)),
   onNote: (fn) => ipcRenderer.on('ui:note', (_e, msg) => fn(msg)),
@@ -60,7 +59,6 @@ contextBridge.exposeInMainWorld('adeBridge', {
 
   shortcuts: () => ipcRenderer.invoke('app:shortcuts'),
   hit: (on) => ipcRenderer.send('win:hit', !!on),
-  bar: (open) => ipcRenderer.send('win:bar', !!open),
   dragStart: () => ipcRenderer.invoke('win:dragStart'),
   dragMove: () => ipcRenderer.send('win:dragMove'),
   dragEnd: () => ipcRenderer.send('win:dragEnd'),
