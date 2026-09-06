@@ -230,8 +230,11 @@
     { name: 'cancel', hint: 'nothing to cancel; clear the input box', stub: false },
     { name: 'cite', hint: 'Cite sources from recent answers', stub: false },
     { name: 'clear', hint: 'move this tab to session memory', stub: false },
+    { name: 'codex', hint: 'Codex overview; daily|weekly|monthly runs a pass', stub: false },
     { name: 'compact', hint: 'keep the last 20, archive the rest', stub: false },
     { name: 'config', hint: 'Show configuration', stub: true },
+    { name: 'contradictions', hint: 'Codex clashes; held-open ones listed apart', stub: false },
+    { name: 'council', hint: 'Convene a council - the skeptic is mandatory', stub: false },
     { name: 'context', hint: 'Show active context (last N messages + c', stub: false },
     { name: 'db', hint: 'Database status', stub: true },
     { name: 'decision', hint: 'Show latest decision', stub: false },
@@ -251,6 +254,7 @@
     { name: 'memory', hint: 'store a fact in the task thread', stub: false },
     { name: 'models', hint: 'Available models', stub: true },
     { name: 'monitor', hint: 'Monitor active positions', stub: false },
+    { name: 'patterns', hint: 'Codex patterns, coincidences included', stub: false },
     { name: 'persona', hint: 'active persona; reload|test|diff', stub: true },
     { name: 'plan', hint: 'Show plan summary', stub: false },
     { name: 'portfolio', hint: 'Portfolio status', stub: true },
@@ -259,6 +263,7 @@
     { name: 'qvm', hint: 'QVM operations', stub: true },
     { name: 'reason', hint: 'Explain latest decision', stub: false },
     { name: 'recall', hint: 'list every stored fact', stub: false },
+    { name: 'reflect', hint: 'open reflections; answer <id> <text> to reply', stub: false },
     { name: 'remember', hint: 'look up one stored fact by key', stub: false },
     { name: 'research', hint: 'Research multi-sentence question', stub: false },
     { name: 'restore', hint: 'bring back the newest archived batch', stub: false },
@@ -275,6 +280,7 @@
     { name: 'task', hint: 'List open tasks', stub: false },
     { name: 'tools', hint: 'Available tools', stub: true },
     { name: 'trace', hint: 'Show execution trace', stub: true },
+    { name: 'unknown', hint: 'Book VII - the questions still open', stub: false },
     { name: 'watch', hint: 'Watchlist display', stub: true },
   ];
 
@@ -1372,6 +1378,173 @@
                  ', Chromium ' + (ch ? ch[1] : 'unknown') +
                  ', platform ' + (navigator.platform || 'unknown') +
                  '. Ade OS itself: /health.');
+            handled = true;
+          } else if (cmd === 'codex') {
+            /* The Codex surface. No argument is an overview; a period name
+               runs that rhythm. `monthly` here writes NO evolution entries --
+               section 42 wants six fields per changed belief, and a command
+               that could produce one from the word "monthly" would be the
+               silent rewriting the log exists to prevent. */
+            var period = { daily: 'day', weekly: 'week', monthly: 'month',
+                           day: 'day', week: 'week', month: 'month' }[args.trim().toLowerCase()];
+            if (!period) {
+              push(activeTab, 'system', 'text', 'Reading the Codex...');
+              B.call('/v1/codex').then(function (r) {
+                var d = (r && r.data && r.data.codex) || null;
+                if (!d) {
+                  push(activeTab, 'system', 'text',
+                       'No Codex - ' + ((r && r.data && r.data.detail) ||
+                                        (r && r.error) || 'no reply') + '.');
+                  return;
+                }
+                var counts = d.counts || {}, lines = [], k;
+                for (k in counts) {
+                  if (Object.prototype.hasOwnProperty.call(counts, k) && counts[k]) {
+                    lines.push(k.replace('codex_', '') + ' ' + counts[k]);
+                  }
+                }
+                push(activeTab, 'system', 'text',
+                     lines.length ? lines.join(', ')
+                                  : 'The Codex is empty. Nothing has been written yet.');
+                push(activeTab, 'system', 'text',
+                     '/codex daily|weekly|monthly runs a pass. /unknown is Book VII.');
+              });
+            } else {
+              push(activeTab, 'system', 'text', 'Running the ' + period + ' pass...');
+              B.call('/v1/codex/rhythm/' + period, 'POST', {}).then(function (r) {
+                var d = (r && r.data) || {};
+                if (d.detail) {
+                  push(activeTab, 'system', 'text', 'Refused: ' + d.detail);
+                  return;
+                }
+                var out = [period + ' pass, ' + (d.period_key || '?')];
+                if (d.open_questions) out.push(d.open_questions.length + ' open questions');
+                if (d.patterns_ready) out.push(d.patterns_ready.length + ' patterns ready to decide');
+                if (d.contradictions_undecided) {
+                  out.push(d.contradictions_undecided.length + ' contradictions undecided');
+                }
+                if (d.evolution_entries) {
+                  out.push(d.evolution_entries.length + ' beliefs changed');
+                }
+                push(activeTab, 'system', 'text', out.join('; ') + '.');
+                if (d.unlogged_changes && d.unlogged_changes.length) {
+                  push(activeTab, 'system', 'text',
+                       d.unlogged_changes.length + ' belief(s) changed with NOTHING recorded. ' +
+                       'That is the gap section 42 exists to catch.');
+                }
+              });
+            }
+            handled = true;
+          } else if (cmd === 'reflect') {
+            /* Open reflections, or answer one. Surfaced, never forced --
+               section 38's LIVE CODEX mode is opt-in, and an agent that
+               interrupts work to ask about feelings gets turned off. */
+            var ra = args.trim().split(' ');
+            if (ra[0] === 'answer' && ra[1]) {
+              var rid = ra[1], body = ra.slice(2).join(' ');
+              B.call('/v1/codex/reflect/' + rid + '/answer', 'POST', { answer: body })
+                .then(function (r) {
+                  var d = (r && r.data) || {};
+                  push(activeTab, 'system', 'text',
+                       d.detail ? ('Refused: ' + d.detail)
+                                : ((d.decision || 'recorded') + '. ' + (d.question || '')));
+                });
+            } else {
+              B.call('/v1/codex/reflect/open').then(function (r) {
+                var rows = (r && r.data && r.data.reflections) || [];
+                if (!rows.length) {
+                  push(activeTab, 'system', 'text', 'Nothing open. Nothing is waiting on you.');
+                  return;
+                }
+                for (var i = 0; i < rows.length; i++) {
+                  push(activeTab, 'system', 'text',
+                       '#' + rows[i].id + ' [' + rows[i].trigger + '] ' +
+                       (rows[i].question || rows[i].subject));
+                }
+                push(activeTab, 'system', 'text', '/reflect answer <id> <your answer>');
+              });
+            }
+            handled = true;
+          } else if (cmd === 'patterns') {
+            /* Coincidences printed BESIDE confirmations. A list of only the
+               confirmed ones would make the Codex look far more perceptive
+               than it is. */
+            B.call('/v1/codex/patterns').then(function (r) {
+              var d = (r && r.data) || {}, rows = d.patterns || [];
+              if (!rows.length) {
+                push(activeTab, 'system', 'text', 'No patterns noticed yet.');
+                return;
+              }
+              for (var i = 0; i < rows.length; i++) {
+                push(activeTab, 'system', 'text',
+                     '[' + rows[i].state + ' x' + rows[i].occurrences + '] ' +
+                     rows[i].statement);
+              }
+              var st = d.standing || {}, sd = st.survived_of_decided || [0, 0];
+              push(activeTab, 'system', 'text',
+                   sd[0] + ' of ' + sd[1] + ' decided patterns survived their null hypothesis.');
+            });
+            handled = true;
+          } else if (cmd === 'contradictions') {
+            /* Held-open ones are listed APART and never counted as backlog.
+               Section 29 says the system should not immediately resolve one,
+               and a count that reads as debt is exactly that pressure. */
+            B.call('/v1/codex/contradictions').then(function (r) {
+              var d = (r && r.data) || {}, st = d.standing || {};
+              var rows = d.contradictions || [];
+              if (!rows.length) {
+                push(activeTab, 'system', 'text', 'No contradictions found.');
+                return;
+              }
+              for (var i = 0; i < rows.length; i++) {
+                push(activeTab, 'system', 'text',
+                     '#' + rows[i].id + ' [' + rows[i].state + '] ' + rows[i].tension);
+              }
+              push(activeTab, 'system', 'text',
+                   (st.undecided || []).length + ' undecided. ' +
+                   (st.held_open || []).length + ' held open ON PURPOSE - not a backlog.');
+            });
+            handled = true;
+          } else if (cmd === 'unknown') {
+            /* Book VII. It cannot be completed, and that is the point. */
+            B.call('/v1/codex/questions?state=OPEN').then(function (r) {
+              var rows = (r && r.data && r.data.questions) || [];
+              if (!rows.length) {
+                push(activeTab, 'system', 'text',
+                     'No open questions. That is not an achievement - Book VII is never finished.');
+                return;
+              }
+              for (var i = 0; i < rows.length; i++) {
+                push(activeTab, 'system', 'text',
+                     '#' + rows[i].id + ' ' + rows[i].text +
+                     (rows[i].asked_count > 1 ? ' (asked ' + rows[i].asked_count + 'x)' : ''));
+              }
+            });
+            handled = true;
+          } else if (cmd === 'council') {
+            /* The skeptic is mandatory and the rounds are bounded. Both
+               refusals come back as text rather than silence. */
+            var q = args.trim();
+            if (!q) {
+              push(activeTab, 'system', 'text', 'Ask something: /council <question>');
+            } else {
+              push(activeTab, 'system', 'text', 'Convening...');
+              B.call('/v1/codex/council', 'POST', { question: q }).then(function (r) {
+                var d = (r && r.data) || {}, c = d.council;
+                if (!c) {
+                  push(activeTab, 'system', 'text',
+                       'Refused: ' + (d.detail || (r && r.error) || 'no reply'));
+                  return;
+                }
+                push(activeTab, 'system', 'text',
+                     c.rounds + ' rounds, roles: ' + (c.roles || []).join(', '));
+                if (!c.is_a_record) {
+                  push(activeTab, 'system', 'text',
+                       'No disagreements, uncertainties or new questions. ' +
+                       'A council that leaves only a synthesis has lost the thing it was for.');
+                }
+              });
+            }
             handled = true;
          } else if (cmd === 'health') {
             /* Reads Ade OS. The literal this replaces answered "all systems
