@@ -24,7 +24,19 @@
   async function speakText(text) {
     if (!B || !text) return;
     var r = await B.speak(text);
-    if (!r || !r.ok) return;
+    if (!r || !r.ok) {
+      if (r && r.error === 'nothing speakable') return;
+      /* Mute used to look like "the avatar is not speaking" because a
+         timeout or 503 was swallowed here. The Chat window owns the
+         transcript, so the failure has to cross as a speech error. */
+      if (B.saySpeech) {
+        B.saySpeech({
+          status: 'error',
+          text: 'Could not speak: ' + ((r && r.error) || 'no audio')
+        });
+      }
+      return;
+    }
     stopSpeaking();
     try {
       if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
@@ -133,8 +145,16 @@
 
   function onUtterance(u) {
     if (!u || !u.text) return;
-    var command = stripWake(u.text);
-    if (command === null) return;                  /* not for us: discard */
+    var raw = String(u.text).trim();
+    if (!raw) return;
+    var command = stripWake(raw);
+    /* Speech without "Ade" used to be discarded, so the mic looked live and
+       nothing ever appeared in the input. It still does not dispatch -- it
+       lands in the chat box so you can see it and press Enter. */
+    if (command === null) {
+      if (B) B.saySpeech({ text: raw, engine: u.engine || '', dictate: true });
+      return;
+    }
     if (window.GLYPH && window.GLYPH.wake) window.GLYPH.wake();
     if (B) B.saySpeech({ text: command, engine: u.engine || '', empty: !command });
   }
@@ -193,5 +213,19 @@
       if (c && window.GLYPH) window.GLYPH.setBacking(c.backing !== false);
     });
     B.state().then(function (s) { if (s && window.GLYPH) window.GLYPH.setAde(s); });
+
+    /* The orb cannot take focus, so a boot-time AudioContext often stays
+       suspended and the analyser reads silence. Resume on any pointer on
+       the glyph, and again every few seconds while the track is open. */
+    async function keepMicAwake() {
+      if (window.PTT && window.PTT.isLive && window.PTT.isLive()) {
+        if (window.PTT.resume) await window.PTT.resume();
+        return;
+      }
+      var c = await B.config();
+      if (c && c.mic !== false) await micOn();
+    }
+    window.addEventListener('pointerdown', function () { void keepMicAwake(); });
+    setInterval(function () { void keepMicAwake(); }, 3000);
   }
 })();

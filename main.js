@@ -14,11 +14,18 @@
  *                 "ungated" at the point of use.
  */
 'use strict';
-const { app, BrowserWindow, Tray, Menu, ipcMain, screen, shell, nativeImage, clipboard, dialog } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, screen, shell, nativeImage, clipboard, dialog, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { loadThreads, saveThreads } = require('./threads-store');
+const { filesRoot, ensureFilesLayout } = require('./files-store');
+
+/* The glyph window is setFocusable(false) so it never steals the keyboard.
+   Chromium then treats its AudioContext as not user-activated and the live
+   mic opens but stays silent -- the orb looks deaf. This has to be set
+   before ready. */
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 const ADE_BASE = process.env.ADEOS_URL || 'http://127.0.0.1:8300';
 const SMOKE = process.argv.includes('--smoke');
@@ -26,7 +33,10 @@ const CFG_PATH = () => path.join(app.getPath('userData'), 'avatar-state.json');
 
 let win = null, tray = null, timer = null, dragAnchor = null;
 let chatWin = null;                 /* the desktop conversation window */
-let overPaint = false, lastIgnore = null;
+/* Start clickable. The old default (false) ignored the mouse until the
+   renderer reported painted pixels under the cursor -- and a window that
+   never got that hover event stayed permanently click-through. */
+let overPaint = true, lastIgnore = null;
 let cfg = { x: null, y: null, size: 380, clickThrough: false, speak: false, opacity: 1, backing: true, mic: true,
             chatX: null, chatY: null, chatW: 900, chatH: 620 };
 let micLive = false;   /* what the renderer last reported, for the tray label */
@@ -48,6 +58,22 @@ function threadsPath() {
   if (!SMOKE) return path.join(app.getPath('userData'), 'threads.json');
   if (!smokeThreadsDir) smokeThreadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ade-threads-smoke-'));
   return path.join(smokeThreadsDir, 'threads.json');
+}
+
+/* Avatar-local files tree. Smoke uses a temp root so a self-test never
+   writes the real AppData files/ folder. */
+let smokeFilesDir = null;
+function filesUserData() {
+  if (!SMOKE) return app.getPath('userData');
+  if (!smokeFilesDir) smokeFilesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ade-files-smoke-'));
+  return smokeFilesDir;
+}
+function filesDir() {
+  return filesRoot(filesUserData());
+}
+function openFilesFolder() {
+  const root = ensureFilesLayout(filesUserData());
+  return shell.openPath(root);
 }
 let threadsTimer = 0, lastThreads = null;
 function queueThreadsSave(data) {
@@ -79,22 +105,64 @@ async function ade(pathname, { method = 'GET', body = null, timeout = 8000 } = {
     try { data = text ? JSON.parse(text) : null; } catch (e) { data = { raw: text }; }
     return { ok: res.ok, status: res.status, data };
   } catch (e) {
-    return { ok: false, status: 0, error: String((e && e.message) || e) };
+    const name = (e && e.name) || '';
+    const msg = String((e && e.message) || e);
+    /* AbortController fires as DOMException name AbortError; without this
+       the chat window just says "Call failed: This operation was aborted"
+       and the user cannot tell Ade was still working past the client budget. */
+    if (name === 'AbortError' || /aborted/i.test(msg)) {
+      return {
+        ok: false, status: 0,
+        error: 'timed out after ' + Math.round(timeout / 1000)
+          + 's waiting for Ade OS' + pathname
+      };
+    }
+    /* Node's fetch reports a dead loopback as the bare string "fetch failed".
+       Ade OS restarts drop every in-flight call; without this the chat just
+       says "Call failed: fetch failed" and the retry looks like a client bug. */
+    if (/fetch failed|ECONNREFUSED|ECONNRESET|ECONNABORTED/i.test(msg)) {
+      return {
+        ok: false, status: 0,
+        error: 'Ade OS unreachable at ' + ADE_BASE
+          + ' — it may be restarting. Wait for health, then retry.'
+      };
+    }
+    return { ok: false, status: 0, error: msg };
   } finally {
     clearTimeout(kill);
   }
 }
 
+/* First short sentence only. Maya1 is ~9x realtime; a 600-char Chat dump
+   (2026-09-07) became 8 gated segments and the avatar timed out mute. */
+function clipForSpeech(text) {
+  const raw = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return '';
+  if (/^(we have (a |the )?(massive )?(search|tool|fetch)|the search results|the list_files tool|the user asks)/i.test(raw)) return '';
+  const m = raw.match(/^(.+?[.!?])(?:\s|$)/);
+  let spoken = m ? m[1] : raw;
+  if (spoken.length > 160) {
+    spoken = spoken.slice(0, 160).replace(/\s+\S*$/, '').replace(/[.,;:]+$/, '') + '.';
+  }
+  return spoken;
+}
+
 /* /v1/voice/speak answers with audio/wav. ade() reads text() and would mangle
    it, so speech takes its own path and hands the renderer base64 to decode. */
 async function adeSpeak(text) {
+  const spoken = clipForSpeech(text);
+  if (!spoken) return { ok: false, status: 0, error: 'nothing speakable' };
   const ctl = new AbortController();
-  const kill = setTimeout(() => ctl.abort(), 30000);
+  /* 180s, not 30s: Maya1 renders at tens of seconds per utterance (measured
+     9.3s of audio in 218s). At 30s the avatar ABORTED and reported a broken
+     speak rather than a slow one. Kokoro answers in 0.42s and never noticed
+     this budget either way. */
+  const kill = setTimeout(() => ctl.abort(), 180000);
   try {
     const res = await fetch(ADE_BASE + '/v1/voice/speak', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: String(text || '').slice(0, 600) }),
+      body: JSON.stringify({ text: clipForSpeech(text) }),
       signal: ctl.signal
     });
     if (!res.ok) return { ok: false, status: res.status, error: 'speak returned ' + res.status };
@@ -102,7 +170,12 @@ async function adeSpeak(text) {
     if (!buf.length) return { ok: false, status: res.status, error: 'empty audio' };
     return { ok: true, wav: buf.toString('base64') };
   } catch (e) {
-    return { ok: false, status: 0, error: String((e && e.message) || e) };
+    const name = (e && e.name) || '';
+    const msg = String((e && e.message) || e);
+    if (name === 'AbortError' || /aborted/i.test(msg)) {
+      return { ok: false, status: 0, error: 'timed out after 180s waiting for voice' };
+    }
+    return { ok: false, status: 0, error: msg };
   } finally {
     clearTimeout(kill);
   }
@@ -358,7 +431,11 @@ function createChatWindow() {
   chatWin.on('closed', () => { chatWin = null; });
 }
 
-/* Open/focus the chat window; `tab` optionally pre-selects a thread. */
+/* Open/focus the chat window; `tab` optionally pre-selects a thread.
+ * Always tell the renderer to focus the input — tray / Ctrl+Alt+C /
+ * second-instance call openChat() with no tab, and without chat:focus
+ * the window shows but #in never receives keystrokes (BrowserWindow
+ * focus ≠ input focus on Windows). */
 function openChat(tab) {
   if (!chatWin || chatWin.isDestroyed()) return;
   if (cfg.chatX != null) {
@@ -368,7 +445,10 @@ function openChat(tab) {
   }
   chatWin.show();
   chatWin.focus();
-  if (tab && chatWin.webContents) chatWin.webContents.send('chat:focus', tab);
+  if (chatWin.webContents) {
+    chatWin.webContents.focus();
+    chatWin.webContents.send('chat:focus', tab || null);
+  }
 }
 
 /* ------------------------------------------------------------------ tray */
@@ -414,6 +494,7 @@ function buildMenu() {
     },
     { type: 'separator' },
     { label: 'Reset position', click: () => { cfg.x = cfg.y = null; saveCfg(); if (win) { win.close(); createWindow(); } } },
+    { label: 'Open files', click: () => openFilesFolder() },
     { label: 'Open Ade API', click: () => shell.openExternal(ADE_BASE + '/v1/health') },
     { label: 'Restart Ade OS…', click: async () => { const r = await ade('/v1/restart', { method: 'POST', body: {} }); dialogNote(r.ok ? 'Restart requested.' : 'Restart failed: ' + (r.error || r.status)); } },
     { type: 'separator' },
@@ -453,11 +534,24 @@ function createTray() {
 /* -------------------------------------------------------------------- IPC */
 /* Named, not inline, so --smoke's pttUp drive can swap it out for a recorder
    and restore exactly this -- see startSmokeRun()'s pttSmoke block. */
+/* Per-route client budgets. Ade OS's /v1/ask deadline is ~400s; /v1/tasks
+ * is an unattended agent turn and routinely runs past two minutes. A single
+ * 120s AbortController used to report "Call failed" on every escalated
+ * task Enter, while Ade was still working. */
+const ADE_CALL_TIMEOUT_MS = {
+  '/v1/tasks': 20 * 60 * 1000,
+  '/v1/ask': 7 * 60 * 1000,
+  '/v1/chat/completions': 7 * 60 * 1000,
+  '/v1/terminal': 5 * 60 * 1000
+};
+const ADE_CALL_TIMEOUT_DEFAULT_MS = 120000;
+
 function handleAdeCall(_e, pathname, method, body) {
   if (typeof pathname !== 'string' || !pathname.startsWith('/v1/')) {
     return { ok: false, status: 0, error: 'refused: only /v1/* on the local Ade OS' };
   }
-  return ade(pathname, { method: method || 'GET', body: body || null, timeout: 120000 });
+  const timeout = ADE_CALL_TIMEOUT_MS[pathname] || ADE_CALL_TIMEOUT_DEFAULT_MS;
+  return ade(pathname, { method: method || 'GET', body: body || null, timeout });
 }
 ipcMain.handle('ade:call', handleAdeCall);
 ipcMain.handle('ade:state', () => state);
@@ -473,7 +567,7 @@ ipcMain.on('mic:state', (_e, live) => {
   if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.send('mic:state', micLive);
 });
 ipcMain.handle('threads:load', () => {
-  try { return loadThreads(threadsPath()); } catch (e) { return { chat: [], shell: [], task: [] }; }
+  try { return loadThreads(threadsPath()); } catch (e) { return { chat: [], shell: [] }; }
 });
 ipcMain.on('threads:save', (_e, data) => queueThreadsSave(data));
 /* voice relay: glyph renderer -> chat window (speech events), and the answers
@@ -529,7 +623,17 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => { openChat(); });
 
   app.whenReady().then(() => {
+    const sess = session.defaultSession;
+    sess.setPermissionRequestHandler((_wc, permission, callback) => {
+      callback(permission === 'media' || permission === 'microphone'
+        || permission === 'audioCapture');
+    });
+    sess.setPermissionCheckHandler((_wc, permission) => (
+      permission === 'media' || permission === 'microphone'
+      || permission === 'audioCapture'
+    ));
     loadCfg();
+    ensureFilesLayout(filesUserData());
     createWindow();
     createTray();
     createChatWindow();
@@ -727,6 +831,13 @@ function startSmokeRun() {
         voiceRelay.askOpened = chatWin.isVisible();
         voiceRelay.askBubble = (await js('document.getElementById("thread").textContent')).indexOf('what is the backlog') >= 0;
 
+        /* speech without the wake word enters the input and does not dispatch */
+        posted.length = 0;
+        await js('(function(){ window.__handleSpeech({ text: "hello from the mic", engine: "whisper", dictate: true }); })(),0');
+        await new Promise((r) => setTimeout(r, 150));
+        voiceRelay.dictateEnters = await js('document.getElementById("in").value') === 'hello from the mic';
+        voiceRelay.dictateNoDispatch = posted.length === 0;
+
         /* stop cuts speech and opens nothing */
         await js('window.adeBridge.hideChat(),0');
         await new Promise((r) => setTimeout(r, 120));
@@ -773,6 +884,8 @@ function startSmokeRun() {
           && voiceRelay.askTab === true
           && voiceRelay.askOpened === true
           && voiceRelay.askBubble === true
+          && voiceRelay.dictateEnters === true
+          && voiceRelay.dictateNoDispatch === true
           && voiceRelay.stopDoesNotOpen === true
           && pttSmoke.ok === true;
       } finally {
@@ -1152,8 +1265,8 @@ function startSmokeRun() {
     try {
       await chatWin.webContents.executeJavaScript(
         '(function(){ var w = window.__threads();' +
-        ' w.chat = []; w.shell = []; w.task = [];' +
-        ' window.adeBridge.threadsSave({chat:[],shell:[],task:[]}),0; })(),0');
+        ' w.chat = []; w.shell = [];' +
+        ' window.adeBridge.threadsSave({chat:[],shell:[]}),0; })(),0');
       await new Promise((r) => setTimeout(r, 400));
       if (chatWin && !chatWin.isDestroyed()) chatWin.hide();
     } catch (e) { /* smoke hygiene only; chatProbe reports its own results */ }
@@ -1179,21 +1292,30 @@ function startSmokeRun() {
           'window.__threadsLoaded ? window.__threads().chat.length : -1'
         );
         await chatWin.webContents.executeJavaScript(
-          'window.adeBridge.threadsSave({chat:[{id:"smoke",role:"user",kind:"text",text:"t",meta:{}}],shell:[],task:[]}),0'
+          'window.adeBridge.threadsSave({chat:[{id:"smoke",role:"user",kind:"text",text:"t",meta:{}}],shell:[]}),0'
         );
         await new Promise((r) => setTimeout(r, 900));   /* main's 400ms write debounce */
         chatProbe.bridgeRoundTrip = await chatWin.webContents.executeJavaScript(
           '(async function(){ var t = await window.adeBridge.threadsLoad(); return t && t.chat && t.chat[0] ? t.chat[0].id : null; })()'
         );
+        /* openChat() with no tab (tray / Ctrl+Alt+C) must still focus #in.
+           Before the fix, chat:focus only fired when a tab was passed. */
+        openChat();
+        await new Promise((r) => setTimeout(r, 80));
+        chatProbe.inputFocused = await chatWin.webContents.executeJavaScript(
+          'document.activeElement && document.activeElement.id === "in"'
+        );
+        if (chatWin && !chatWin.isDestroyed()) chatWin.hide();
       }
       chatProbe.ok = chatProbe.exists === true
         && chatProbe.hiddenAtLaunch === true
         && chatProbe.resizable === true
         && chatProbe.inTaskbar === true
         && chatProbe.title === 'Ade'
-        && JSON.stringify(chatProbe.tabs) === JSON.stringify(['chat', 'shell', 'task'])
+        && JSON.stringify(chatProbe.tabs) === JSON.stringify(['chat', 'shell'])
         && chatProbe.loadedThreads === 0
-        && chatProbe.bridgeRoundTrip === 'smoke';
+        && chatProbe.bridgeRoundTrip === 'smoke'
+        && chatProbe.inputFocused === true;
     } catch (e) { chatProbe = { error: String((e && e.message) || e) }; }
 
     /* The single classifier lives in the chat window now. Same contracts the
@@ -1203,28 +1325,32 @@ function startSmokeRun() {
       const js = (s) => chatWin.webContents.executeJavaScript(s);
       slashChat.skillVerb = await js('JSON.stringify(window.__classify("/skill"))');
       slashChat.skillNamed = await js('JSON.stringify(window.__classify("/skill brainstorming"))');
-      slashChat.typeKeepsWord = await js('window.__classify("/superpowers").type');
+      slashChat.typeKeepsWord = await js('window.__classify("/xyzzy").type');
+      slashChat.superpowersIsSkill = await js('window.__classify("/superpowers").kind');
       slashChat.typeWithBody = await js('window.__classify("/qa run the suite").text');
       slashChat.plainAsksNow = JSON.parse(await js('JSON.stringify(window.__classify("fix the build"))'));
       slashChat.route = JSON.parse(await js(
-        'JSON.stringify((function(){ window.__setTab("task"); var t = window.__routePlain("run it");' +
+        'JSON.stringify((function(){ window.__setTab("shell"); var sh = window.__routePlain("run it");' +
         ' window.__setTab("chat"); var c = window.__routePlain("what is here");' +
         ' var s = window.__routePlain("!git status");' +
-        ' return { shell: s, taskPlain: t, chatPlain: c }; })())'));
-      slashChat.routeOk = slashChat.route.shell.kind === 'shell'
-        && slashChat.route.taskPlain.kind === 'task' && slashChat.route.taskPlain.type === 'coding'
+        ' var typed = window.__routePlain("/coding run it");' +
+        ' return { shellTab: sh, bang: s, typedTask: typed, chatPlain: c }; })())'));
+      slashChat.routeOk = slashChat.route.bang.kind === 'shell'
+        && slashChat.route.shellTab.kind === 'shell'
+        && slashChat.route.typedTask.kind === 'task' && slashChat.route.typedTask.type === 'coding'
         && slashChat.route.chatPlain.kind === 'ask' && slashChat.route.chatPlain.route === 'ground';
       slashChat.ok = JSON.parse(slashChat.skillVerb).kind === 'skill'
         && JSON.parse(slashChat.skillNamed).text === 'brainstorming'
-        && slashChat.typeKeepsWord === 'superpowers'
+        && slashChat.typeKeepsWord === 'xyzzy'
+        && slashChat.superpowersIsSkill === 'skill'
         && slashChat.typeWithBody === 'run the suite'
         && slashChat.plainAsksNow.kind === 'ask'
         && slashChat.plainAsksNow.route === 'ground'
         && slashChat.routeOk === true;
     } catch (e) { slashChat = { error: String((e && e.message) || e) }; }
 
-    /* Ask contracts on the new surface: escalation stages a Task in the chat
-       window's input and NEVER dispatches; a grounded answer clears it. */
+    /* Ask contracts: escalation stays on Chat and NEVER dispatches; a
+       grounded answer clears the input. */
     let askChat = {};
     try {
       const js = (s) => chatWin.webContents.executeJavaScript(s);
@@ -1241,7 +1367,9 @@ function startSmokeRun() {
       await js('window.__applyAskResult({ answer: "", escalate: { task_type: "coding", prompt: "fix it" } })');
       const after = await js('window.__dispatchCount()');
       askChat.escalationDoesNotDispatch = after === before;
-      askChat.escalationStagesTask = await js('document.getElementById("in").value') === '/coding fix it';
+      const staged = JSON.parse(await js(
+        '(function(){ return JSON.stringify({ tab: window.__activeTab(), input: document.getElementById("in").value }); })()'));
+      askChat.escalationStaysOnChat = staged.tab === 'chat' && staged.input === '';
 
       const namedRootOut = await js(
         '(function(){ window.__setTab("chat");' +
@@ -1258,7 +1386,7 @@ function startSmokeRun() {
       askChat.ok = askChat.bareInputAsks && askChat.prefixStillDispatches
         && askChat.shellUnchanged && askChat.explicitAskUnchanged
         && askChat.escalationDoesNotDispatch === true
-        && askChat.escalationStagesTask && askChat.escalationNamesRoot
+        && askChat.escalationStaysOnChat && askChat.escalationNamesRoot
         && askChat.clearsInputOnAnswer;
     } catch (e) { askChat = { error: String((e && e.message) || e) }; }
 
@@ -1443,13 +1571,13 @@ function startSmokeRun() {
       retryChat.ok = retryChat.bubble && retryChat.staged && retryChat.resent;
     } catch (e) { retryChat = { error: String((e && e.message) || e) }; }
 
-    /* Approvals moved into the chat window with the bar. A new undecided
-       approval appends a card into the Task tab and RAISES the window (the
-       orb's amber pending look is glyph.js reading state.pending and does not
-       move); Allow/Deny posts /v1/approvals/<id>/decide and marks the card;
-       the same id never double-appends. Driven renderer-side so the probe owes
-       the network nothing -- pollAde()'s arrival only decides WHICH id, the
-       card logic is here. */
+    /* Approvals live on the Chat tab. A new undecided approval appends a
+       card and RAISES the window (the orb's amber pending look is glyph.js
+       reading state.pending and does not move); Allow/Deny posts
+       /v1/approvals/<id>/decide and marks the card; the same id never
+       double-appends. Driven renderer-side so the probe owes the network
+       nothing -- pollAde()'s arrival only decides WHICH id, the card logic
+       is here. */
     let smsApproval = {};
     try {
       const js = (s) => chatWin.webContents.executeJavaScript(s);
@@ -1505,7 +1633,7 @@ function startSmokeRun() {
         smsApproval.thirdButtons = await js('document.querySelectorAll("#thread button.approve, #thread button.deny").length');
 
         smsApproval.ok = smsApproval.raised === true
-          && smsApproval.tab === 'task'
+          && smsApproval.tab === 'chat'
           && smsApproval.cards === 1
           && smsApproval.namesTool === true
           && smsApproval.buttons === 2
@@ -1523,8 +1651,8 @@ function startSmokeRun() {
       } finally {
         await js('window.adeBridge.hideChat(),0').catch(() => {});
         await js('(function(){ var w = window.__threads();' +
-                 ' w.task = w.task.filter(function(m){ return !(m.kind === "approval" && m.meta && /^s[123]$/.test(m.meta.approval && m.meta.approval.id)); });' +
-                 ' window.adeBridge.threadsSave({ chat: w.chat, shell: w.shell, task: w.task }),0; })(),0').catch(() => {});
+                 ' w.chat = w.chat.filter(function(m){ return !(m.kind === "approval" && m.meta && /^s[123]$/.test(m.meta.approval && m.meta.approval.id)); });' +
+                 ' window.adeBridge.threadsSave({ chat: w.chat, shell: w.shell }),0; })(),0').catch(() => {});
         ipcMain.removeHandler('ade:call');
         ipcMain.handle('ade:call', handleAdeCall);
         timer = setInterval(pollAde, 2000);

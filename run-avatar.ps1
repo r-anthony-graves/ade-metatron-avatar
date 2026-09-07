@@ -9,11 +9,13 @@
     .\run-avatar.ps1            start it (no-ops if already running)
     .\run-avatar.ps1 -Status    report whether it is up
     .\run-avatar.ps1 -Stop      stop it
+    .\run-avatar.ps1 -Restart   close it if open, then start
 #>
 [CmdletBinding()]
 param(
   [switch]$Status,
   [switch]$Stop,
+  [switch]$Restart,
   [string]$AdeUrl = 'http://127.0.0.1:8300'
 )
 
@@ -36,12 +38,26 @@ if ($Status) {
   return
 }
 
-if ($Stop) {
+function Stop-Avatar {
   $p = Get-AvatarProcs
-  if (-not $p) { 'avatar: not running'; return }
+  if (-not $p) {
+    Write-Host 'avatar: not running'
+    return $false
+  }
   foreach ($proc in $p) { Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue }
-  "avatar: stopped ($($p.ProcessId -join ', '))"
+  Write-Host "avatar: stopped ($($p.ProcessId -join ', '))"
+  return $true
+}
+
+if ($Stop) {
+  [void](Stop-Avatar)
   return
+}
+
+if ($Restart) {
+  # A second start no-ops and keeps the old process -- so a voice or
+  # main.js change never loads. Close first when we mean restart.
+  if (Stop-Avatar) { Start-Sleep -Seconds 2 }
 }
 
 if (-not (Test-Path $electron)) {

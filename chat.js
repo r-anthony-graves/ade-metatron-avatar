@@ -657,15 +657,22 @@
         return 'Cleared.';
       }
       var cleaned = String(text || '').replace(/^\s*ESCALATE:\s*/gim, '').trim();
-      var where = result.escalate.root ? (' in ' + result.escalate.root) : '';
-      var extra = (cleaned ? cleaned + '\n\n' : '')
-        + 'Ade would treat this as a change' + where
-        + '. It stays here — nothing was staged.';
+      var extra;
+      if (/^(greet|say hello|say hi)\b/i.test(escPrompt) ||
+          /^(hi|hello|hey)[.!\s]*$/i.test(cleaned)) {
+        extra = 'Hello, Ray.';
+      } else {
+        var where = result.escalate.root ? (' in ' + result.escalate.root) : '';
+        extra = (cleaned ? cleaned + '\n\n' : '')
+          + 'Ade would treat this as a change' + where
+          + '. It stays here — nothing was staged.';
+      }
       setTab('chat');
       push('chat', 'ade', 'ask', extra);
       input.value = '';
       paintTabLabel();
       focusInput();
+      return extra;
     } else {
       input.value = '';
       push('chat', 'ade', 'ask', text || '(no output)');
