@@ -19,6 +19,21 @@
   var state = { online: false, busy: false, pending: 0, brain: '', approval: null };
 
   var TABS = ['chat', 'shell'];
+  /* Read-only views. DELIBERATELY NOT in TABS: `threads` is keyed by TABS and
+     several loops walk `threads[TABS[t]]` to compact, archive and count, so a
+     tab with no thread behind it would read `undefined` in five places. The
+     journal is the Codex's own record, not a conversation -- pushing fetched
+     entries into a persisted thread would also duplicate every entry each
+     time the tab was opened. */
+  var READ_TABS = ['journal'];
+  /* The prompt the Codex is currently putting to Ray, from
+     /v1/codex/invitation. Held because the ANSWER has to go back to the
+     reflection that asked -- `answer_at` is on the invitation, not on the
+     text, and asking again at submit time could hand the answer to a
+     different question if a pass ran in between. */
+  var standingPrompt = null;
+  function allTabs() { return TABS.concat(READ_TABS); }
+  function isRead(tab) { return READ_TABS.indexOf(tab) >= 0; }
   var activeTab = 'chat';
   var threads = { chat: [], shell: [], archive: [] };
 
@@ -165,7 +180,109 @@
     return COMMANDS.map(function (c) { return c.name; });
   };
 
+  /* ------------------------------------------------------------ journal */
+  /* Adé's own journal -- SS39-41, written by the daily/weekly/monthly rhythms
+     and served from /v1/codex/journal. Fetched fresh on every switch to the
+     tab rather than stored: it is a record that changes on its own schedule,
+     and a cached copy would quietly go stale between passes.
+
+     `degraded` is rendered, not hidden. An entry the brain could not write
+     says so, and an empty day and an unreachable engine must never read the
+     same -- that is the journal's own rule (adeos/codex/journal.py) and this
+     view would break it by showing prose either way. */
+  function renderJournal() {
+    threadEl.innerHTML = '';
+    var loading = document.createElement('div');
+    loading.className = 'sys';
+    loading.textContent = 'Reading the journal…';
+    threadEl.appendChild(loading);
+    Promise.all([
+      B.call('/v1/codex/journal', 'GET', null),
+      /* The invitation is allowed to fail on its own. A journal that will not
+         render because the Codex had nothing to ask is worse than a journal
+         with no prompt at the top of it. */
+      B.call('/v1/codex/invitation', 'GET', null).catch(function () {
+        return null;
+      })
+    ]).then(function (both) {
+      if (activeTab !== 'journal') return;      /* switched away mid-fetch */
+      var r = both[0], inv = both[1];
+      standingPrompt = (inv && inv.invitation) || null;
+      paintJournal((r && r.entries) || []);
+    }).catch(function (err) {
+      if (activeTab !== 'journal') return;
+      threadEl.innerHTML = '';
+      var e = document.createElement('div');
+      e.className = 'sys';
+      e.textContent = 'The journal could not be read: ' + (err && err.message
+                        ? err.message : String(err));
+      threadEl.appendChild(e);
+    });
+  }
+  function paintJournal(entries) {
+    threadEl.innerHTML = '';
+    if (standingPrompt && standingPrompt.text) threadEl.appendChild(promptCard());
+    if (!entries.length) {
+      var none = document.createElement('div');
+      none.className = 'sys';
+      none.textContent = 'No entries yet. The rhythms write one per day, '
+                       + 'week and month.';
+      threadEl.appendChild(none);
+      return;
+    }
+    /* Newest last, so it reads like the thread beside it and the latest
+       entry is where the scroll lands. */
+    entries = entries.slice().sort(function (a, b) {
+      return String(a.period_key || '') < String(b.period_key || '') ? -1 : 1;
+    });
+    for (var i = 0; i < entries.length; i++) {
+      threadEl.appendChild(journalEntry(entries[i]));
+    }
+    threadEl.scrollTop = threadEl.scrollHeight;
+  }
+  /* What the Codex is asking, and what answering it costs. Rendered as a
+     card rather than a system line because it is the one thing on this tab
+     Ray is meant to act on. */
+  function promptCard() {
+    var wrap = document.createElement('div');
+    wrap.className = 'msg ade approval';
+    var head = document.createElement('div');
+    head.className = 'meta';
+    head.textContent = 'The Codex is asking · ' + (standingPrompt.kind || '');
+    wrap.appendChild(head);
+    if (standingPrompt.subject) {
+      var sub = document.createElement('div');
+      sub.className = 'meta';
+      sub.textContent = 'on: ' + standingPrompt.subject;
+      wrap.appendChild(sub);
+    }
+    var q = document.createElement('div');
+    q.textContent = standingPrompt.text;
+    wrap.appendChild(q);
+    var how = document.createElement('div');
+    how.className = 'meta';
+    how.textContent = standingPrompt.answer_at
+      ? 'Type your answer below and press Enter.'
+      : 'Nothing to answer here — this one is read in its own view.';
+    wrap.appendChild(how);
+    return wrap;
+  }
+  function journalEntry(entry) {
+    var wrap = document.createElement('div');
+    wrap.className = 'msg ade';
+    var head = document.createElement('div');
+    head.className = 'meta';
+    head.textContent = String(entry.period || '') + ' · '
+                     + String(entry.period_key || '');
+    wrap.appendChild(head);
+    var body = document.createElement('div');
+    body.textContent = String(entry.body || '');
+    wrap.appendChild(body);
+    return wrap;
+  }
+
   function renderThread() {
+    if (isRead(activeTab)) { renderJournal(); return; }
     var list = threads[activeTab];
     threadEl.innerHTML = '';
     for (var i = 0; i < list.length; i++) threadEl.appendChild(renderMsg(list[i]));
@@ -246,7 +363,7 @@
   window.__renderMsg = renderMsg;
 
   function setTab(tab) {
-    if (TABS.indexOf(tab) < 0) tab = 'chat';
+    if (allTabs().indexOf(tab) < 0) tab = 'chat';
     activeTab = tab;
     var tabs = document.querySelectorAll('#tabs .tab');
     for (var i = 0; i < tabs.length; i++) {
@@ -256,6 +373,14 @@
     paintTabLabel();
   }
   function paintTabLabel() {
+    if (activeTab === 'journal') {
+      tabLabel.textContent = 'Journal';
+      tabLabel.className = '';
+      hint.textContent = "Adé's journal, written by the daily, weekly and "
+                       + 'monthly rhythms. When the Codex asks you something, '
+                       + 'answer it here.';
+      return;
+    }
     if (activeTab === 'shell') {
       tabLabel.textContent = 'Shell';
       tabLabel.className = 'shell';
@@ -426,6 +551,12 @@
     var v = String(raw == null ? '' : raw).trim();
     if (/^[!?/]/.test(v)) return classify(v);
     if (activeTab === 'shell') return { kind: 'shell', text: v };
+    /* On the journal tab the composer answers the standing prompt. Only when
+       there IS one and it can be answered -- otherwise the text falls through
+       to an ordinary ask rather than vanishing into a view with no target. */
+    if (activeTab === 'journal' && standingPrompt && standingPrompt.answer_at) {
+      return { kind: 'journal', text: v, at: standingPrompt.answer_at };
+    }
     return classify(v);                          /* chat default: grounded ask */
   }
   window.__routePlain = routePlain;
@@ -563,12 +694,34 @@
   window.__startSpin = startSpin;
   window.__stopSpin = stopSpin;
 
+  /* Ray answering the Codex. The answer goes to the reflection that ASKED --
+     `answer_at` came with the invitation -- so a pass that opened a different
+     question in the meantime cannot receive this one. */
+  async function handleJournalAnswer(c) {
+    input.value = '';
+    try {
+      await B.call(c.at, 'POST', { text: c.text });
+    } catch (err) {
+      var e = document.createElement('div');
+      e.className = 'sys';
+      e.textContent = 'The answer was not recorded: ' + (err && err.message
+                        ? err.message : String(err));
+      threadEl.appendChild(e);
+      return;
+    }
+    /* Re-read rather than patching the view: answering may close the
+       reflection, open the next rung, or raise something else entirely, and
+       only the server knows which. */
+    renderJournal();
+  }
+
   var busy = false;
   async function send(text) {
     var raw = (text === undefined) ? input.value : String(text);
     if (!raw.trim() || busy || !B) return;
     var c = routePlain(raw);
     var targetTab = c.kind === 'shell' ? 'shell' : 'chat';
+    if (c.kind === 'journal') { await handleJournalAnswer(c); return; }
     if (c.kind === 'skill') { await handleSkill(c); return; }
     if (c.kind === 'upload') { await handleUpload(c); return; }
     if (!c.text) { push(targetTab, 'system', 'staged', await emptyHelp(c)); return; }
