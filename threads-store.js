@@ -1,8 +1,12 @@
-/* Persistence for the chat window's three threads (chat, shell, task).
+/* Persistence for the chat window's two threads (chat, shell).
  *
  * A pure module: no Electron imports, so it can be unit-tested with plain
  * `node --test`. The renderer never touches this file -- it sends whole
  * thread objects over IPC and main.js calls saveThreads() (debounced there).
+ *
+ * Files written when a Task tab still existed keep a `task` array. Load
+ * merges those messages onto `chat` so they are not lost, then the key is
+ * dropped on the next save.
  */
 'use strict';
 const fs = require('fs');
@@ -11,7 +15,7 @@ const path = require('path');
 const MAX_MESSAGES = 4000;   /* hard safety floor per tab (spec: uncapped in
                                 normal use) -- only keeps a runaway thread from
                                 ballooning the file forever */
-const TABS = ['chat', 'shell', 'task'];
+const TABS = ['chat', 'shell'];
 
 /* /clear and /compact move messages OUT of a tab rather than destroying them:
    Ray, 2026-09-05, "delete but saved to session memory". Each entry is
@@ -23,7 +27,7 @@ const TABS = ['chat', 'shell', 'task'];
 const MAX_ARCHIVE = 20;
 
 function defaultThreads() {
-  return { chat: [], shell: [], task: [], archive: [] };
+  return { chat: [], shell: [], archive: [] };
 }
 
 function loadThreads(file) {
@@ -41,6 +45,9 @@ function loadThreads(file) {
     const tab = TABS[i];
     if (Array.isArray(data && data[tab])) out[tab] = data[tab].slice(-MAX_MESSAGES);
   }
+  if (Array.isArray(data && data.task) && data.task.length) {
+    out.chat = out.chat.concat(data.task).slice(-MAX_MESSAGES);
+  }
   if (Array.isArray(data && data.archive)) out.archive = data.archive.slice(-MAX_ARCHIVE);
   return out;
 }
@@ -56,4 +63,4 @@ function saveThreads(file, data) {
   fs.writeFileSync(file, JSON.stringify(out, null, 2));
 }
 
-module.exports = { loadThreads, saveThreads, defaultThreads, MAX_MESSAGES, MAX_ARCHIVE };
+module.exports = { loadThreads, saveThreads, defaultThreads, MAX_MESSAGES, MAX_ARCHIVE, TABS };

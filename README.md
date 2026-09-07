@@ -34,24 +34,25 @@ layout. It is now clamped on startup so at least a corner always stays on a
 real display, and **Reset position** in the tray menu drops it back to the
 bottom-right.
 
-The window has three tabs, and the labelless input row inherits the active
+The window has two tabs, and the labelless input row inherits the active
 tab's default. The prefixes still override at every turn:
 
 | You type (or the tab you are in) | Where it goes |
 |---|---|
-| Chat tab: `what is in glyph.js` | `POST /v1/ask` — a grounded read against the three machine-access roots; the reply names which root it read |
-| Chat tab: `fix the failing test in test_gate.py` | `POST /v1/ask` decides this is a change, does nothing, and stages `/coding fix the failing test in test_gate.py` in the **Task tab** — **nothing runs until you press Enter** |
-| Task tab, or `/qa run the trust-level suite` | `POST /v1/tasks` — an agent does the work, with an explicit task type |
+| Chat tab: `what is in glyph.js` | `POST /v1/ask` — the last 12 Chat turns go with the question; Ade brainstorms or plans in-thread when the work is new; the reply stays on Chat |
+| Chat tab: `search the web for …` | same `/v1/ask` loop — no Task tab, no second Enter |
+| `/qa run the trust-level suite` | `POST /v1/tasks` — an agent does the work; the result lands on Chat |
 | Shell tab, or `!git status` | `POST /v1/terminal` — direct subprocess |
 | `?what brain are you on` | `POST /v1/chat/completions` — plain chat, no roots read |
 
 **Drop files or folders straight onto the window** in any tab — same walk, same report.
 
-Bare text used to dispatch a coding Task the instant you pressed Enter. It asks
-now: `/v1/ask` either answers directly or — for anything that looks like a
-change — does nothing and hands back what it would run, which lands in the Task
-tab as a staged `/<type> <prompt>` for you to read before it does anything.
-Every thread persists across restarts (`userData/threads.json`).
+Bare Chat text always asks. If Ade still cannot do the work read-only, the
+reply stays on Chat; nothing is staged onto a Task tab. Explicit `/type …`
+is the only way this window reaches `/v1/tasks`. Every thread persists
+across restarts (`userData/threads.json`). Local files live in
+`userData/files/` (`voice`, `uploads`, `exports`, `scratch`). Tray **Open files**
+opens that tree.
 
 ## Voice
 
@@ -64,8 +65,8 @@ new barges in and cuts off the old answer.
 
 **You speak, and it is already listening.** The microphone is open by default
 (Ray, 2026-08-27). Say **"Ade"** and then the command — "Ade, run the tests".
-Anything not addressed to Ade is recognised locally, discarded, and dispatches
-nothing. "Hey Ade" and "Ada" work too: all three transcribe to the same token,
+Anything not addressed to Ade is recognised locally and typed into the chat
+input — it dispatches nothing until you press Enter. "Hey Ade" and "Ada" work too: all three transcribe to the same token,
 which was measured against the live recogniser rather than assumed. "Adelaide"
 does not trigger it — the wake token needs a separator after it.
 
@@ -162,11 +163,8 @@ input for you to review and press Enter — it is never dispatched on
 recognition alone.
 
 Bare open speech — no leading keyword — is different: it is answered
-straight away, spoken back, over `POST /v1/ask`. That is safe on recognition
-alone because asking changes nothing: `/v1/ask` either answers a question or,
-for anything that looks like a change, does nothing and hands back what it
-would run, which stages in the Task tab as a `/<type> <prompt>` for
-your own Enter. Speech never reaches `POST /v1/tasks` by itself.
+straight away, spoken back, over `POST /v1/ask`. Asking changes nothing
+and the reply stays on Chat. Speech never reaches `POST /v1/tasks` by itself.
 
 ### Voice cannot approve anything
 

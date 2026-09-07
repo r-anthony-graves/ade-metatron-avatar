@@ -1225,7 +1225,8 @@ window.GLYPH = {
      that is not drawn from an input that never arrived -- they look identical
      from the far side of a screenshot */
   _state: function(){ return { mic: MIC_OPEN, micLit: ADE.micLit,
-    hearing: ADE.hearing, speaking: ADE.speaking, audio: !!(AUDIO.on && AUDIO.an) }; },
+    hearing: ADE.hearing, speaking: ADE.speaking, audio: !!(AUDIO.on && AUDIO.an),
+    level: AUDIO.level || 0, env: AUDIO.env || 0 }; },
   arm: function(){ tryArm(); },
   isArmed: function(){ return AUDIO.on; }
 };

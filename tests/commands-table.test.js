@@ -175,7 +175,7 @@ test('no command branch reaches for node globals', () => {
      and threw ReferenceError -- which aborts the keydown handler, so it printed
      nothing AND swallowed the Enter. Anything from main belongs on the bridge. */
   const bad = [];
-  const re = /\b(process|require|__dirname|Buffer)\s*[.(]/g;
+  const re = /\b(process|require|__dirname|Buffer|ipcRenderer)\s*[.(]/g;
   let m;
   const code = codeOnly(SRC);
   while ((m = re.exec(code))) bad.push(m[1]);
@@ -195,9 +195,54 @@ test('no command answers with silence', () => {
   bounds.forEach((b, i) => {
     const stop = i + 1 < bounds.length ? bounds[i + 1].at : b.end + 1200;
     const body = stripComments(SRC.slice(b.end, stop));
-    /* hideChat() counts: the window going away IS the feedback */
-    if (body.indexOf('push(') === -1 && body.indexOf('hideChat') === -1) silent.push(b.name);
+    /* hideChat() / clearThread() count: the window going away or the
+       thread emptying IS the feedback */
+    if (body.indexOf('push(') === -1 && body.indexOf('hideChat') === -1
+        && body.indexOf('clearThread') === -1) silent.push(b.name);
   });
   assert.deepEqual([...new Set(silent)].sort(), [],
     'command prints nothing and gives no feedback: ' + silent.join(', '));
+});
+
+test('send() spins words while Ade works and does not persist them', () => {
+  const sendAt = SRC.indexOf('async function send(text)');
+  const sendEnd = SRC.indexOf('window.__send = send;');
+  assert.ok(sendAt > 0 && sendEnd > sendAt, 'could not find send()');
+  const body = SRC.slice(sendAt, sendEnd);
+  assert.ok(body.indexOf('startSpin(targetTab)') !== -1, 'send() never starts the spinner');
+  assert.ok(body.indexOf('stopSpin()') !== -1, 'send() never stops the spinner');
+  assert.ok(/var SPIN_WORDS\s*=/.test(SRC), 'no spinner word list');
+  assert.ok(SRC.indexOf('Zigzagging') !== -1 && SRC.indexOf('Flibbertigibbeting') !== -1,
+    'spinner list is still the short four-word set');
+  assert.ok(SRC.indexOf("m.kind !== 'spin'") !== -1,
+    'persist() does not strip spinner lines — they would land in threads.json');
+});
+
+test('chat sends the thread with /v1/ask', () => {
+  const askAt = SRC.indexOf('function askQuestion(');
+  const askEnd = SRC.indexOf('async function emptyHelp');
+  assert.ok(askAt > 0 && askEnd > askAt, 'could not find askQuestion()');
+  const body = SRC.slice(askAt, askEnd);
+  assert.ok(body.indexOf('history: threadHistory(threads.chat)') !== -1,
+    'askQuestion does not send the Chat thread — each line would be isolated');
+  assert.ok(SRC.indexOf('function threadHistory(list)') !== -1);
+  assert.ok(SRC.indexOf("m.kind === 'spin'") !== -1
+            && SRC.indexOf("m.role === 'system'") !== -1,
+    'threadHistory must drop spin/system rows');
+});
+
+test('a dead Ade OS is not reported as fetch failed', () => {
+  const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.ok(/fetch failed\|ECONNREFUSED/.test(main),
+    'main.js no longer maps a dropped loopback to a readable error');
+  assert.ok(main.indexOf('Ade OS unreachable') !== -1,
+    'connection-drop mapping lost its user-facing wording');
+});
+
+test('clear-context language does not go to /v1/ask', () => {
+  assert.ok(SRC.indexOf('function looksLikeClear') !== -1);
+  assert.ok(SRC.indexOf('looksLikeClear(c.text)') !== -1,
+    'send() still POSTs a clear-context sentence to /v1/ask');
+  assert.ok(SRC.indexOf('looksLikeClear(escPrompt)') !== -1,
+    'applyAskResult does not catch a clear escalate');
 });
