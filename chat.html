@@ -88,7 +88,7 @@
               border-radius:3px; padding:1px 5px; }
   .cmd-none { padding:4px 7px; color:var(--steel); font-size:11px; font-style:italic; }
   body.dropping { outline:2px dashed rgba(88,166,255,.55); outline-offset:-4px; }
-  .spin { color:#b3540f; }
+  .sys.spin { color:#b3540f; letter-spacing:.08em; }
   .msg.approval .approval { display:inline-block; max-width:78%; border:1px solid var(--line);
                             background:#fff8ea; border-radius:8px; padding:8px 10px;
                             font:400 12px/1.4 "Segoe UI",system-ui,sans-serif; }
@@ -115,11 +115,10 @@
   <div id="tabs">
     <button class="tab on" data-tab="chat" type="button">Chat</button>
     <button class="tab" data-tab="shell" type="button">Shell</button>
-    <button class="tab" data-tab="task" type="button">Task</button>
   </div>
   <div id="skills"></div>
   <main id="thread"></main>
-  <footer>
+<footer>
     <div id="cmdlist" hidden></div>
     <div class="row">
       <span id="tab-label">Ask</span>
@@ -127,8 +126,9 @@
              placeholder="Tell Ade what to do…">
       <button id="mic" type="button" title="The microphone is open. Click to stop the track.">Mute</button>
     </div>
-    <div id="hint">Enter to send · <b>!</b> shell (ungated) · <b>?</b> ask · <b>/type</b> task type · <b>/skill</b> attach a procedure · <b>/upload</b> files, or drop them here · <b id="talkKey">tray menu</b> to speak · Esc to hide</div>
+    <div id="hint">This thread continues — Ade will ask before building · <b>/clear</b> starts over · <b>!</b> shell · <b>/type</b> a task · <b>/skill</b> · <b>/superpowers</b> · <b id="talkKey">tray menu</b> to speak · Esc hides</div>
   </footer>
+  <script src="lsp-address.js"></script>
   <script src="chat.js"></script>
 </body>
 </html>

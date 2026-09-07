@@ -1,4 +1,4 @@
-/* The chat window: three persistent threads (Chat / Shell / Task) behind tabs,
+/* The chat window: two persistent threads (Chat / Shell) behind tabs,
  * replacing the under-glyph command bar as the conversation surface.
  *
  * All command-facing logic for the avatar converges HERE -- classify(),
@@ -18,9 +18,9 @@
   var micBtn = document.getElementById('mic');
   var state = { online: false, busy: false, pending: 0, brain: '', approval: null };
 
-  var TABS = ['chat', 'shell', 'task'];
+  var TABS = ['chat', 'shell'];
   var activeTab = 'chat';
-  var threads = { chat: [], shell: [], task: [], archive: [] };
+  var threads = { chat: [], shell: [], archive: [] };
 
   /* -------------------------------------------------------- threads */
   var persistTimer = 0;
@@ -28,11 +28,89 @@
     if (persistTimer) clearTimeout(persistTimer);
     persistTimer = setTimeout(function () {
       persistTimer = 0;
-      if (B) B.threadsSave({ chat: threads.chat, shell: threads.shell, task: threads.task,
-                             archive: threads.archive || [] });
+      if (B) B.threadsSave({
+        chat: (threads.chat || []).filter(function (m) { return m.kind !== 'spin'; }),
+        shell: (threads.shell || []).filter(function (m) { return m.kind !== 'spin'; }),
+        archive: threads.archive || []
+      });
     }, 300);          /* main debounces the actual file write again */
   }
+  /* ---- LSP commands (/def /refs /hover /diag) ----------------------
+     Pure HTTP against /v1/lsp/* -- no agent, no brain, no tokens. The
+     bridge wraps transport in {ok, status, data}; Ade OS's own envelope
+     {ok, data|error} rides INSIDE r.data, so both layers get checked.
+     An empty result renders as 'nothing found' -- that came from a
+     server that looked; only a down server renders as a failure. */
+  function renderLsp(kind, d) {
+    var NL = String.fromCharCode(10);
+    if (kind === 'definition' || kind === 'references') {
+      var locs = d.locations || [];
+      if (!locs.length) return 'nothing found';
+      var lines = [];
+      if (kind === 'references') {
+        var files = {};
+        for (var fi = 0; fi < locs.length; fi++) files[locs[fi].file] = 1;
+        lines.push(d.count + ' reference(s) in '
+                   + Object.keys(files).length + ' file(s)'
+                   + (d.count > locs.length
+                      ? ' (showing ' + Math.min(locs.length, 30) + ')' : ''));
+      }
+      var show = locs.slice(0, 30);
+      for (var i = 0; i < show.length; i++) {
+        var l = show[i];
+        lines.push(l.file + ':' + l.line + ':' + l.col
+                   + (l.preview ? '  ' + l.preview.trim() : ''));
+      }
+      if (locs.length > 30) {
+        lines.push('... and ' + (locs.length - 30) + ' more');
+      }
+      return lines.join(NL);
+    }
+    if (kind === 'hover') return d.contents || 'no hover info';
+    var c = d.counts || {};
+    var head = (c.error || 0) + ' error(s), ' + (c.warning || 0)
+             + ' warning(s), ' + (c.info || 0) + ' info';
+    var items = d.items || [];
+    if (!items.length) return head + ' - file is clean';
+    var out = [head];
+    for (var di = 0; di < items.length; di++) {
+      var it = items[di];
+      out.push(it.severity.charAt(0).toUpperCase() + ' ' + it.line + ':'
+               + it.col + ' ' + it.message
+               + (it.code ? ' (' + it.code + ')' : ''));
+    }
+    return out.join(NL);
+  }
+  function lspFail(kind, r) {
+    var env = (r && r.data) || {};
+    var e = env.error || {};
+    return kind + ' failed: '
+         + (e.message || e.code || (r && r.error) || 'no reply from Ade OS');
+  }
+  function lspQuery(kind, argstr) {
+    var addr = window.parseLspAddress(argstr);
+    if (addr.error) { push(activeTab, 'system', 'text', addr.error); return; }
+    var qs = [];
+    if (addr.file) qs.push('file=' + encodeURIComponent(addr.file));
+    if (addr.line) {
+      qs.push('line=' + addr.line);
+      qs.push('col=' + (addr.col || 1));
+    }
+    if (addr.symbol) qs.push('symbol=' + encodeURIComponent(addr.symbol));
+    B.call('/v1/lsp/' + kind + '?' + qs.join('&')).then(function (r) {
+      var env = (r && r.data) || {};
+      if (!r || !r.ok || env.ok === false) {
+        push(activeTab, 'system', 'text', lspFail(kind, r));
+        return;
+      }
+      push(activeTab, 'system', 'text', renderLsp(kind, env.data || {}));
+    }).catch(function (err) {
+      push(activeTab, 'system', 'text', kind + ' failed: ' + err);
+    });
+  }
+
   function push(tab, role, kind, text, meta) {
+    if (TABS.indexOf(tab) < 0) tab = 'chat';
     var m = { id: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 8),
               ts: Date.now(), tab: tab, role: role, kind: kind,
               text: String(text == null ? '' : text), meta: meta || {} };
@@ -48,6 +126,33 @@
      write, so the in-memory copy cannot disagree with the file. */
   var MAX_ARCHIVE = 20;
   var COMPACT_KEEP = 20;
+  function looksLikeClear(text) {
+    var v = String(text == null ? '' : text).trim().toLowerCase()
+      .replace(/^escalate:\s*/, '');
+    return /^(please\s+)?(clear|reset|wipe|forget)\s+(the\s+)?(current\s+)?(context|chat|thread|conversation|task|history)\b/.test(v)
+      || /^(new|start a new)\s+(chat|conversation|thread)\b/.test(v)
+      || /^user requested to clear\b/.test(v)
+      || v === 'clear' || v === 'clear context';
+  }
+  function clearThread(tab) {
+    if (TABS.indexOf(tab) < 0) tab = 'chat';
+    var liveC = threads[tab] || [];
+    if (!liveC.length) {
+      push(tab, 'system', 'text', 'Nothing to clear in ' + tab + '.');
+      return 0;
+    }
+    archivePush(tab, liveC.slice());
+    threads[tab] = [];
+    renderThread();
+    persist();
+    push(tab, 'system', 'text',
+         'Cleared ' + liveC.length + ' from ' + tab +
+         ' - saved to session memory. /restore brings it back.');
+    return liveC.length;
+  }
+  window.__looksLikeClear = looksLikeClear;
+  window.__clearThread = clearThread;
+
   function archivePush(tab, messages) {
     if (!threads.archive) threads.archive = [];
     threads.archive.push({ at: Date.now(), tab: tab, messages: messages });
@@ -71,7 +176,7 @@
     wrap.className = 'msg ' + m.role;
     wrap.setAttribute('data-id', m.id);
     if (m.role === 'system') {
-      wrap.className = 'sys';
+      wrap.className = m.kind === 'spin' ? 'sys spin' : 'sys';
       wrap.textContent = m.text;
       return wrap;
     }
@@ -210,7 +315,18 @@
      the DEFAULT route for a plain line (routePlain); the three prefixes always
      override, and spokenToTyped (Task 5) rewrites spoken English into these
      same prefixes so speech and typing cannot drift. */
-  var SKILL_VERBS = { skill: 1, skills: 1, unskill: 1 };
+  var SKILL_VERBS = { skill: 1, skills: 1, unskill: 1, superpowers: 1 };
+  var SUPERPOWERS_PROCESS = [
+    'using-superpowers',
+    'brainstorming',
+    'systematic-debugging',
+    'writing-plans',
+    'executing-plans',
+    'verification-before-completion',
+    'dispatching-parallel-agents',
+    'requesting-code-review',
+    'receiving-code-review'
+  ];
   var UPLOAD_VERBS = { upload: 1, uploads: 1 };
 
   /* Every slash command the keydown chain below handles, as DATA -- the chain
@@ -238,12 +354,15 @@
     { name: 'context', hint: 'Show active context (last N messages + c', stub: false },
     { name: 'db', hint: 'Database status', stub: true },
     { name: 'decision', hint: 'Show latest decision', stub: false },
+    { name: 'def', hint: 'Where is it defined - /def symbol | file:line[:col]', stub: false },
     { name: 'dev', hint: 'Developer mode', stub: false },
+    { name: 'diag', hint: 'Type errors for one file - /diag path', stub: false },
     { name: 'exit', hint: 'Evaluate exits', stub: false },
     { name: 'forget', hint: 'Forget a stored fact (mark as moot)', stub: false },
     { name: 'gpu', hint: 'GPU status', stub: false },
     { name: 'health', hint: 'Health check', stub: false },
     { name: 'help', hint: 'list these commands', stub: false },
+    { name: 'hover', hint: 'Signature/type at a spot - /hover symbol | file:line[:col]', stub: false },
     { name: 'inspect', hint: 'Inspect internal state', stub: true },
     { name: 'journal', hint: 'Show trade journal', stub: false },
     { name: 'kill', hint: 'refuses: no trading path connected', stub: true },
@@ -264,6 +383,7 @@
     { name: 'reason', hint: 'Explain latest decision', stub: false },
     { name: 'recall', hint: 'list every stored fact', stub: false },
     { name: 'reflect', hint: 'open reflections; answer <id> <text> to reply', stub: false },
+    { name: 'refs', hint: 'Who uses it - /refs symbol | file:line[:col]', stub: false },
     { name: 'remember', hint: 'look up one stored fact by key', stub: false },
     { name: 'research', hint: 'Research multi-sentence question', stub: false },
     { name: 'restore', hint: 'bring back the newest archived batch', stub: false },
@@ -306,7 +426,6 @@
     var v = String(raw == null ? '' : raw).trim();
     if (/^[!?/]/.test(v)) return classify(v);
     if (activeTab === 'shell') return { kind: 'shell', text: v };
-    if (activeTab === 'task') return { kind: 'task', type: 'coding', text: v };
     return classify(v);                          /* chat default: grounded ask */
   }
   window.__routePlain = routePlain;
@@ -332,8 +451,36 @@
   }
   window.__dispatchCount = function () { return taskDispatchCount; };
 
+  function threadHistory(list) {
+    /* Prior Chat turns for /v1/ask. Spin/system rows are not a conversation.
+       The last user line is the question being asked — drop it so it is not
+       sent twice. Same cap the server sanitizes to (12). */
+    var src = list || [];
+    var out = [];
+    var i, m, role, text;
+    for (i = 0; i < src.length; i++) {
+      m = src[i];
+      if (!m || m.kind === 'spin' || m.role === 'system') continue;
+      text = String(m.text == null ? '' : m.text).trim();
+      if (!text) continue;
+      if (m.role === 'user') role = 'user';
+      else if (m.role === 'ade') role = 'assistant';
+      else continue;
+      if (text.length > 2500) text = text.slice(0, 2500) + '…';
+      out.push({ role: role, content: text });
+    }
+    if (out.length && out[out.length - 1].role === 'user') out.pop();
+    if (out.length > 12) out = out.slice(-12);
+    return out;
+  }
+  window.__threadHistory = threadHistory;
+
   function askQuestion(question) {
-    return B.call('/v1/ask', 'POST', { question: question });
+    return B.call('/v1/ask', 'POST', {
+      question: question,
+      skills: attached.slice(),
+      history: threadHistory(threads.chat)
+    });
   }
 
   async function emptyHelp(c) {
@@ -347,18 +494,90 @@
         ? '/' + c.type + ' needs something to do — e.g. /' + c.type + ' run the tests.'
         : '"' + c.type + '" is not a task type.')
       + (names.length ? '\n\nTypes: ' + names.join(', ') : '')
-      + '\n\nOr /skill <name> to attach a procedure.';
+      + '\n\nOr /skill <name> to attach a procedure, /superpowers for the process set.';
   }
+
+  var SPIN_WORDS = (
+    "Accomplishing Actioning Actualizing Architecting Baking Beaming " +
+    "Beboppin' Befuddling Billowing Blanching Bloviating Boogieing " +
+    "Boondoggling Booping Bootstrapping Brewing Bunning Burrowing " +
+    "Calculating Canoodling Caramelizing Cascading Catapulting Cerebrating " +
+    "Channeling Channelling Choreographing Churning Clauding Coalescing " +
+    "Cogitating Combobulating Composing Computing Concocting Considering " +
+    "Contemplating Cooking Crafting Creating Crunching Crystallizing " +
+    "Cultivating Deciphering Deliberating Determining Dilly-dallying " +
+    "Discombobulating Doing Doodling Drizzling Ebbing Effecting Elucidating " +
+    "Embellishing Enchanting Envisioning Fermenting Fiddle-faddling Finagling " +
+    "Flambéing Flibbertigibbeting Flowing Flummoxing Fluttering Forging " +
+    "Forming Frolicking Frosting Gallivanting Galloping Garnishing " +
+    "Generating Gesticulating Germinating Gitifying Grooving Gusting " +
+    "Harmonizing Hashing Hatching Herding Honking Hullaballooing " +
+    "Hyperspacing Ideating Imagining Improvising Incubating Inferring " +
+    "Infusing Ionizing Jitterbugging Julienning Kneading Leavening " +
+    "Levitating Lollygagging Manifesting Marinating Meandering Metamorphosing " +
+    "Misting Moonwalking Moseying Mulling Mustering Musing " +
+    "Nebulizing Nesting Newspapering Noodling Nucleating Orbiting " +
+    "Orchestrating Osmosing Perambulating Percolating Perusing Philosophising " +
+    "Photosynthesizing Pollinating Pondering Pontificating Pouncing " +
+    "Precipitating Prestidigitating Processing Proofing Propagating Puttering " +
+    "Puzzling Quantumizing Razzle-dazzling Razzmatazzing Recombobulating " +
+    "Reticulating Roosting Ruminating Sautéing Scampering Schlepping " +
+    "Scurrying Seasoning Shenaniganing Shimmying Simmering Skedaddling " +
+    "Sketching Slithering Smooshing Sock-hopping Spelunking Spinning " +
+    "Sprouting Stewing Sublimating Swirling Swooping Symbioting " +
+    "Synthesizing Tempering Thinking Thundering Tinkering Tomfoolering " +
+    "Topsy-turvying Transfiguring Transmuting Twisting Undulating Unfurling " +
+    "Unravelling Vibing Waddling Wandering Warping Whatchamacalliting " +
+    "Whirlpooling Whirring Whisking Wibbling Working Wrangling Zesting " +
+    "Zigzagging"
+  ).split(/\s+/);
+  var spinTimer = 0, spinIdx = 0, spinMsg = null;
+
+  function startSpin(tab) {
+    stopSpin();
+    if (TABS.indexOf(tab) < 0) tab = 'chat';
+    spinIdx = Math.floor(Math.random() * SPIN_WORDS.length);
+    spinMsg = { id: 'spin-' + Date.now(), ts: Date.now(), tab: tab,
+                role: 'system', kind: 'spin', text: SPIN_WORDS[spinIdx] + '…', meta: {} };
+    threads[tab].push(spinMsg);
+    if (tab === activeTab) renderThread();
+    spinTimer = setInterval(function () {
+      if (!spinMsg) return;
+      spinIdx = (spinIdx + 1) % SPIN_WORDS.length;
+      spinMsg.text = SPIN_WORDS[spinIdx] + '…';
+      if (spinMsg.tab === activeTab) renderThread();
+    }, 90000);
+  }
+  function stopSpin() {
+    if (spinTimer) { clearInterval(spinTimer); spinTimer = 0; }
+    if (!spinMsg) return;
+    var list = threads[spinMsg.tab];
+    if (list) {
+      var i = list.indexOf(spinMsg);
+      if (i >= 0) list.splice(i, 1);
+    }
+    spinMsg = null;
+    renderThread();
+  }
+  window.__spinWords = function () { return SPIN_WORDS.slice(); };
+  window.__startSpin = startSpin;
+  window.__stopSpin = stopSpin;
 
   var busy = false;
   async function send(text) {
     var raw = (text === undefined) ? input.value : String(text);
     if (!raw.trim() || busy || !B) return;
     var c = routePlain(raw);
-    var targetTab = c.kind === 'shell' ? 'shell' : c.kind === 'ask' ? 'chat' : 'task';
+    var targetTab = c.kind === 'shell' ? 'shell' : 'chat';
     if (c.kind === 'skill') { await handleSkill(c); return; }
     if (c.kind === 'upload') { await handleUpload(c); return; }
     if (!c.text) { push(targetTab, 'system', 'staged', await emptyHelp(c)); return; }
+    if (c.kind === 'ask' && looksLikeClear(c.text)) {
+      setTab(targetTab);
+      input.value = '';
+      clearThread(targetTab);
+      return;
+    }
 
     stopSpeaking();
     busy = true;
@@ -369,24 +588,28 @@
     setTab(targetTab);
     input.value = '';
     paintTabLabel();
+    startSpin(targetTab);
 
     var res;
-    if (c.kind === 'shell') {
-      res = await B.call('/v1/terminal', 'POST', { cmd: c.text });
-    } else if (c.kind === 'ask' && c.route === 'ground') {
-      res = await askQuestion(c.text);
-    } else if (c.kind === 'ask') {
-      res = await B.call('/v1/chat/completions', 'POST', {
-        messages: [{ role: 'user', content: c.text }], stream: false
-      });
-    } else {
-      res = await dispatchTask({
-        description: c.text, task_type: c.type || 'coding', topic: 'u/local/avatar',
-        skills: attached.slice()
-      });
+    try {
+      if (c.kind === 'shell') {
+        res = await B.call('/v1/terminal', 'POST', { cmd: c.text });
+      } else if (c.kind === 'ask' && c.route === 'ground') {
+        res = await askQuestion(c.text);
+      } else if (c.kind === 'ask') {
+        res = await B.call('/v1/chat/completions', 'POST', {
+          messages: [{ role: 'user', content: c.text }], stream: false
+        });
+      } else {
+        res = await dispatchTask({
+          description: c.text, task_type: c.type || 'coding', topic: 'u/local/avatar',
+          skills: attached.slice()
+        });
+      }
+    } finally {
+      stopSpin();
+      busy = false;
     }
-
-    busy = false;
     if (!res || !res.ok) {
       /* A failure must not eat the user's line (spec Error handling). The
          error bubble names the cause and the ORIGINAL line is staged back
@@ -413,9 +636,10 @@
   }
   window.__send = send;
 
-  /* The one place a /v1/ask reply becomes UI. An escalation does NOTHING but
-     stage into the Task tab input -- dispatchTask() is the only road to
-     /v1/tasks and this function never takes it. */
+  /* The one place a /v1/ask reply becomes UI. An escalate payload used to
+     jump to a Task tab and stage `/coding …` for a second Enter. There is
+     no Task tab now: the answer (and any escalate text) stays on Chat and
+     this function never calls dispatchTask(). */
   function applyAskResult(result) {
     result = result || {};
     var text = result.answer || '';
@@ -423,11 +647,23 @@
       text = (text ? text + '\n\n' : '') + 'From: ' + result.roots_cited.join(', ');
     }
     if (result.escalate) {
+      var escPrompt = result.escalate.prompt || '';
+      if (looksLikeClear(escPrompt) || looksLikeClear(text)) {
+        setTab('chat');
+        input.value = '';
+        clearThread('chat');
+        paintTabLabel();
+        focusInput();
+        return 'Cleared.';
+      }
+      var cleaned = String(text || '').replace(/^\s*ESCALATE:\s*/gim, '').trim();
       var where = result.escalate.root ? (' in ' + result.escalate.root) : '';
-      setTab('task');
-      push('task', 'system', 'staged',
-        (text ? text + '\n\n' : '') + 'Staged as a task' + where + ' — press Enter to run it, or edit first.');
-      input.value = '/' + (result.escalate.task_type || 'coding') + ' ' + (result.escalate.prompt || '');
+      var extra = (cleaned ? cleaned + '\n\n' : '')
+        + 'Ade would treat this as a change' + where
+        + '. It stays here — nothing was staged.';
+      setTab('chat');
+      push('chat', 'ade', 'ask', extra);
+      input.value = '';
       paintTabLabel();
       focusInput();
     } else {
@@ -556,6 +792,17 @@
       focusInput();
       return;
     }
+    if (ev.dictate) {
+      var dictated = String(ev.text == null ? '' : ev.text).trim();
+      if (!dictated) return;
+      if (B) B.openChat('chat'); setTab('chat');
+      push('chat', 'system', 'staged',
+        '“' + dictated + '”' + (ev.engine && ev.engine !== 'whisper' ? ' · ' + ev.engine : ''));
+      input.value = dictated;
+      paintTabLabel();
+      focusInput();
+      return;
+    }
     var text = String(ev.text == null ? '' : ev.text);
     var engine = String(ev.engine || '');
     var spoken = normalizeSpoken(text);
@@ -567,7 +814,7 @@
       void send(typed);
       return;
     }
-    var target = c.kind === 'shell' ? 'shell' : c.kind === 'ask' ? 'chat' : 'task';
+    var target = c.kind === 'shell' ? 'shell' : 'chat';
     if (B) B.openChat(target);
     setTab(target);
     paintTabLabel();
@@ -609,6 +856,29 @@
   async function handleSkill(c) {
     var rows = await loadSkillIndex();
     if (!rows) { push(activeTab, 'ade', 'error', 'Could not read the skills index from Ade OS.'); return; }
+    if (c.verb === 'superpowers' && !c.text) {
+      var added = [];
+      for (var i = 0; i < SUPERPOWERS_PROCESS.length; i++) {
+        var name = SUPERPOWERS_PROCESS[i];
+        var row = null;
+        for (var j = 0; j < rows.length; j++) if (rows[j].name === name) row = rows[j];
+        if (!row || !row.attachable) continue;
+        if (attached.indexOf(name) >= 0) continue;
+        attached.push(name);
+        added.push(name);
+      }
+      paintSkills();
+      push(activeTab, 'ade', 'text',
+        added.length
+          ? ('Attached Superpowers process: ' + added.join(', ')
+             + '. Chat and /coding turns will follow them. /unskill <name> removes one.')
+          : (attached.length
+             ? 'Superpowers process skills are already attached.'
+             : 'No Superpowers process skill was attachable. /skill lists what fits.'));
+      input.value = '';
+      paintTabLabel();
+      return;
+    }
     var wanted = c.text.replace(/^-/, '').trim();
     var removing = c.verb === 'unskill' || /^-/.test(c.text);
     if (!wanted) {
@@ -618,7 +888,7 @@
       var tooBig = rows.filter(function (s) { return !s.attachable; })
                        .map(function (s) { return s.name; });
       push(activeTab, 'system', 'staged',
-        on + '/skill <name> to attach, /unskill <name> to remove.\n\n'
+        on + '/skill <name> to attach, /unskill <name> to remove, /superpowers for the process set.\n\n'
         + names.length + ' available:\n' + names.join(', ')
         + (tooBig.length
            ? '\n\nToo large to attach (over the cap): ' + tooBig.join(', ')
@@ -679,9 +949,10 @@
   async function doUpload(paths, overwrite) {
     if (!paths || !paths.length) { push(activeTab, 'ade', 'error', 'Nothing selected.'); return; }
     busy = true;
-    push(activeTab, 'ade', 'text', '…uploading');      /* replaced by the report */
-    var r = await B.upload(paths, !!overwrite);
-    busy = false;
+    startSpin(activeTab);
+    var r;
+    try { r = await B.upload(paths, !!overwrite); }
+    finally { stopSpin(); busy = false; }
     push(activeTab, (r && r.failed && r.failed.length && !r.sent) ? 'error' : 'ade',
          'text', uploadReport(r));
   }
@@ -725,7 +996,7 @@
   window.__dropPaths = function (files) { return B ? B.dropPaths(files) : []; };
 
   /* ---------------------------------------------------------- approvals */
-  /* An undecided approval is a card in the Task tab. The glyph's amber
+  /* An undecided approval is a card in the Chat tab. The glyph's amber
      pending look is glyph.js reading state.pending -- this window only owns
      the decision itself. `showApprovalId` guards on the id so a 2s poll never
      doubles the card, and the raise only fires when the id CHANGES. An
@@ -734,7 +1005,7 @@
   var showingApprovalId = null;
 
   function lastApprovalCardId() {
-    var list = threads.task;
+    var list = threads.chat;
     for (var i = list.length - 1; i >= 0; i--) {
       if (list[i].role === 'ade' && list[i].kind === 'approval'
           && list[i].meta && list[i].meta.approval) {
@@ -755,10 +1026,10 @@
     markApprovalsMoot();                 /* a new id supersedes any undecided older card */
     showingApprovalId = id;
     if (lastApprovalCardId() !== id) {
-      push('task', 'ade', 'approval', '', { approval: a });
+      push('chat', 'ade', 'approval', '', { approval: a });
     }
-    setTab('task');
-    if (B) B.openChat('task');                 /* auto-raise on a NEW approval */
+    setTab('chat');
+    if (B) B.openChat('chat');                 /* auto-raise on a NEW approval */
   }
   window.__showApproval = showApprovalId;
 
@@ -767,7 +1038,7 @@
      but its Allow/Deny buttons go away so nobody POSTs a decision against an
      id that is no longer pending. Decided cards are never demoted. */
   function markApprovalsMoot() {
-    var list = threads.task, changed = false;
+    var list = threads.chat, changed = false;
     for (var i = 0; i < list.length; i++) {
       var mt = list[i];
       if (mt && mt.meta && mt.meta.approval && !mt.meta.decided && !mt.meta.moot) {
@@ -791,7 +1062,7 @@
     });
     /* the result bubble carries the decision into the thread and is persisted
        with it -- the card keeps its decided look when the window re-polls */
-    push('task', 'ade', r && r.ok ? 'text' : 'error',
+    push('chat', 'ade', r && r.ok ? 'text' : 'error',
       r && r.ok ? (allow ? 'Allowed ' + id : 'Denied ' + id)
                 : 'Could not decide ' + id + ': ' + ((r && (r.error || r.status)) || '?'));
   }
@@ -966,7 +1237,7 @@
       }
       if (e.key === 'Enter') {
         var text = input.value.trim();
-        // Phase 1: slash command handling
+        /* Phase 1: slash command handling */
         if (text.charAt(0) === '/') {
           var parts = text.slice(1).split(' ');
           var cmd = parts[0].toLowerCase();
@@ -989,18 +1260,45 @@
             push(activeTab, 'system', 'text', 'System: glyph window, chat window active, orb click to open');
             handled = true;
           } else if (cmd === 'clear') {
-            // Move this tab into session memory and empty it
-            var liveC = threads[activeTab] || [];
-            if (!liveC.length) {
-              push(activeTab, 'system', 'text', 'Nothing to clear in ' + activeTab + '.');
-            } else {
-              archivePush(activeTab, liveC.slice());
-              threads[activeTab] = [];
-              renderThread();
-              persist();
+            clearThread(activeTab);
+            handled = true;
+          } else if (cmd === 'def') {
+            push(activeTab, 'system', 'text',
+                 'definition: asking the language server...');
+            lspQuery('definition', args);
+            handled = true;
+          } else if (cmd === 'refs') {
+            push(activeTab, 'system', 'text',
+                 'references: asking the language server...');
+            lspQuery('references', args);
+            handled = true;
+          } else if (cmd === 'hover') {
+            push(activeTab, 'system', 'text',
+                 'hover: asking the language server...');
+            lspQuery('hover', args);
+            handled = true;
+          } else if (cmd === 'diag') {
+            var diagFile = (args || '').trim();
+            if (!diagFile) {
               push(activeTab, 'system', 'text',
-                   'Cleared ' + liveC.length + ' from ' + activeTab +
-                   ' - saved to session memory. /restore brings it back.');
+                   'usage: /diag path/to/file.py');
+            } else {
+              push(activeTab, 'system', 'text',
+                   'diagnostics: checking ' + diagFile + '...');
+              B.call('/v1/lsp/diagnostics?file='
+                     + encodeURIComponent(diagFile)).then(function (r) {
+                var env = (r && r.data) || {};
+                if (!r || !r.ok || env.ok === false) {
+                  push(activeTab, 'system', 'text',
+                       lspFail('diagnostics', r));
+                  return;
+                }
+                push(activeTab, 'system', 'text',
+                     renderLsp('diagnostics', env.data || {}));
+              }).catch(function (err) {
+                push(activeTab, 'system', 'text',
+                     'diagnostics failed: ' + err);
+              });
             }
             handled = true;
           } else if (cmd === 'compact') {
@@ -1102,7 +1400,7 @@
             handled = true;
          } else if (cmd === 'summarize') {
             // Summarize current thread
-            var list = threads.task;
+            var list = threads.chat;
             var recent = '';
             for (var i = 0; i < list.length && i < 10; i++) {
               var t = list[i];
@@ -1114,7 +1412,7 @@
             handled = true;
          } else if (cmd === 'cite') {
             // Cite sources from recent answers
-            var list = threads.task;
+            var list = threads.chat;
             var citations = [];
             for (var i = 0; i < list.length && i < 5; i++) {
               var t = list[i];
@@ -1136,7 +1434,7 @@
               if (parts.length >= 2) {
                 var key = parts[0];
                 var value = parts.slice(1).join(' ');
-                var list = threads.task;
+                var list = threads.chat;
                 var found = false;
                 for (var i = 0; i < list.length; i++) {
                   var mt = list[i];
@@ -1148,7 +1446,7 @@
                 }
                 if (!found) {
                   // Add new memory entry at the end
-                  threads.task.push({
+                  threads.chat.push({
                     role: 'ade',
                     kind: 'memory',
                     text: 'memory',
@@ -1168,7 +1466,7 @@
          } else if (cmd === 'remember') {
             // Recall a stored fact by key
             if (args) {
-              var list = threads.task;
+              var list = threads.chat;
               var found = false;
               for (var i = list.length - 1; i >= 0; i--) {
                 var mt = list[i];
@@ -1188,7 +1486,7 @@
          } else if (cmd === 'forget') {
             // Forget a stored fact (mark as moot)
             if (args) {
-              var list = threads.task;
+              var list = threads.chat;
               for (var i = 0; i < list.length; i++) {
                 var mt = list[i];
                 if (mt && mt.meta && mt.meta.memory && mt.meta.memory.key === args && !mt.meta.decided && !mt.meta.moot) {
@@ -1204,7 +1502,7 @@
             handled = true;
          } else if (cmd === 'recall') {
             // List all stored facts
-            var list = threads.task;
+            var list = threads.chat;
             var memories = [];
             for (var i = 0; i < list.length; i++) {
               var mt = list[i];
@@ -1231,7 +1529,7 @@
             handled = true;
          } else if (cmd === 'context') {
             // Show active context (last N messages + current tab)
-            var list = threads.task;
+            var list = threads.chat;
             var recent = [];
             for (var i = list.length - 1; i >= 0 && recent.length < 5; i--) {
               if (list[i].role === 'ade' && (list[i].kind === 'text' || list[i].kind === 'system')) {
@@ -1633,7 +1931,15 @@
       }
     });
     window.__threadsLoadPromise = B.threadsLoad().then(function (t) {
-      if (t) threads = t;
+      if (t) {
+        threads.chat = t.chat || [];
+        threads.shell = t.shell || [];
+        threads.archive = t.archive || [];
+        /* Legacy Task-tab messages land on Chat rather than disappearing. */
+        if (t.task && t.task.length) {
+          threads.chat = threads.chat.concat(t.task);
+        }
+      }
       window.__threadsLoaded = true;
       renderThread();
     });
@@ -1655,7 +1961,7 @@
         if (s.approval) {
           showingApprovalId = s.approval.id;
           if (lastApprovalCardId() !== s.approval.id) {
-            push('task', 'ade', 'approval', '', { approval: s.approval });
+            push('chat', 'ade', 'approval', '', { approval: s.approval });
           }
         }
       }
