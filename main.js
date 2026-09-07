@@ -133,16 +133,26 @@ async function ade(pathname, { method = 'GET', body = null, timeout = 8000 } = {
   }
 }
 
-/* First short sentence only. Maya1 is ~9x realtime; a 600-char Chat dump
-   (2026-09-07) became 8 gated segments and the avatar timed out mute. */
+/* First short sentence only, cut to FIT Ade OS's TTS render budget -- not to
+   be pithy. The /v1/voice/speak engine is boot-time: with ADEOS_VOICE_ENGINE
+   absent Ade OS loads Kokoro (~0.5s per reply, onnxruntime, no GPU), which
+   renders a sentence in near-real-time. But Maya1 (the own-tts sidecar) used
+   to be selected via ADEOS_VOICE_ENGINE=maya1 and rendered at ~20-100x realtime
+   on a contended GPU (measured live 2026-09-07: 61s for a 0.3s single word,
+   gated), and adeSpeak aborts at 180s -- so a long reply became a minute of
+   silence that looked like a broken voice. Keep the clip tight regardless of
+   engine: a 600-char Chat dump became 8 gated segments and the avatar timed
+   out mute. 160 chars is a coherent sentence and stays well inside any
+   engine's budget; a longer utterance that gets cut is still spoken. */
+const MAX_SPOKEN_CHARS = 160;
 function clipForSpeech(text) {
   const raw = String(text || '').replace(/\s+/g, ' ').trim();
   if (!raw) return '';
   if (/^(we have (a |the )?(massive )?(search|tool|fetch)|the search results|the list_files tool|the user asks)/i.test(raw)) return '';
   const m = raw.match(/^(.+?[.!?])(?:\s|$)/);
   let spoken = m ? m[1] : raw;
-  if (spoken.length > 160) {
-    spoken = spoken.slice(0, 160).replace(/\s+\S*$/, '').replace(/[.,;:]+$/, '') + '.';
+  if (spoken.length > MAX_SPOKEN_CHARS) {
+    spoken = spoken.slice(0, MAX_SPOKEN_CHARS).replace(/\s+\S*$/, '').replace(/[.,;:]+$/, '') + '.';
   }
   return spoken;
 }

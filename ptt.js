@@ -129,7 +129,8 @@ window.PTT = (function () {
      2. MUTE STOPS THE TRACK. It does not keep capturing and discard the
         results. The OS microphone indicator goes out, because a mute button
         that leaves the mic open is a lie told by a checkbox. */
-  var live = { on: false, muted: false, stream: null, ctx: null, src: null, node: null, an: null };
+  var live = { on: false, muted: false, stream: null, ctx: null, src: null, node: null, an: null, gain: null };
+  var vadTimer = 0;
   var seg = [], hearing = false, quietMs = 0;
   var SPEECH_RMS = 0.020;      /* below this is room tone, not speech      */
   var HANG_MS    = 400;        /* silence that ends an utterance           */
@@ -146,6 +147,8 @@ window.PTT = (function () {
     /* the glyph lets go FIRST: it must not be left reading an analyser whose
        stream has stopped, which renders as the piece freezing mid-syllable */
     if (window.GLYPH && window.GLYPH.detachAudio) { try { window.GLYPH.detachAudio(); } catch (e) {} }
+    if (vadTimer) { clearInterval(vadTimer); vadTimer = 0; }
+    if (live.gain) { try { live.gain.disconnect(); } catch (e) {} live.gain = null; }
     if (live.an) { try { live.an.disconnect(); } catch (e) {} live.an = null; }
     if (live.node) { try { live.node.disconnect(); live.node.onaudioprocess = null; } catch (e) {} live.node = null; }
     if (live.src) { try { live.src.disconnect(); } catch (e) {} live.src = null; }
@@ -177,52 +180,102 @@ window.PTT = (function () {
     if (text && onUtterance) onUtterance({ text: text, engine: r.data && r.data.engine, seconds: secs });
   }
 
+  async function resumeLive() {
+    if (!live.ctx) return false;
+    if (live.ctx.state === 'suspended') {
+      try { await live.ctx.resume(); } catch (e) { return false; }
+    }
+    return live.ctx.state === 'running';
+  }
+
+  function liveTracksOk() {
+    if (!live.stream) return false;
+    var tracks = live.stream.getTracks();
+    for (var i = 0; i < tracks.length; i++) {
+      if (tracks[i].readyState === 'live') return true;
+    }
+    return false;
+  }
+
+  async function openMic() {
+    var raw = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+    var stream = await navigator.mediaDevices.getUserMedia({ audio: raw });
+    var label = '';
+    try { label = (stream.getAudioTracks()[0] || {}).label || ''; } catch (e) {}
+    if (label && !/stereo mix|what u hear|wave out|loopback|virtual/i.test(label)) return stream;
+    var inputs = [];
+    try {
+      inputs = (await navigator.mediaDevices.enumerateDevices()).filter(function (d) {
+        return d.kind === 'audioinput' && d.deviceId && !/stereo mix|what u hear|wave out|loopback|virtual/i.test(d.label || '');
+      });
+    } catch (e) { return stream; }
+    var prefer = inputs.filter(function (d) { return /yeti|headset|array|usb/i.test(d.label || ''); });
+    var pick = prefer[0] || inputs[0];
+    if (!pick) return stream;
+    try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+    raw.deviceId = { exact: pick.deviceId };
+    return navigator.mediaDevices.getUserMedia({ audio: raw });
+  }
+
   async function startLive(onUtterance, onLevel, onDispatch) {
-    if (live.on && !live.muted) return true;
+    if (live.on && !live.muted && liveTracksOk()) {
+      await resumeLive();
+      if (window.GLYPH && window.GLYPH.attachAudio && live.an) {
+        window.GLYPH.attachAudio(live.an, live.rate);
+      }
+      return !live.ctx || live.ctx.state !== 'suspended';
+    }
     onDispatchCb = onDispatch || null;
     try {
-      live.stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-      });
+      /* Raw capture, same constraints glyph.js arm() uses. Voice-activity
+         reads the analyser on an interval -- ScriptProcessor is deprecated
+         and we do not need it as a second speaker tap. */
+      live.stream = await openMic();
       if (!live.ctx) live.ctx = new (window.AudioContext || window.webkitAudioContext)();
       if (live.ctx.state === 'suspended') await live.ctx.resume();
       live.rate = live.ctx.sampleRate;
       live.src = live.ctx.createMediaStreamSource(live.stream);
-      /* The glyph drives itself from this. Same stream, same capture -- an
-         AnalyserNode is a tap, not a second microphone, so the OS indicator
-         still shows one. The settings match the ones glyph.js's own arm() uses,
-         because its band peaks, onset threshold and pitch tracker were tuned
-         against exactly these. */
       live.an = live.ctx.createAnalyser();
       live.an.fftSize = 2048;
       live.an.smoothingTimeConstant = 0.5;
       live.an.minDecibels = -96;
       live.an.maxDecibels = -12;
       live.src.connect(live.an);
+      /* Analyser is a tap; without a destination pull Chromium can leave
+         the graph unprocessed and getFloatTimeDomainData stays zeros. */
+      live.gain = live.ctx.createGain();
+      live.gain.gain.value = 0;
+      live.an.connect(live.gain);
+      live.gain.connect(live.ctx.destination);
       if (window.GLYPH && window.GLYPH.attachAudio) {
         window.GLYPH.attachAudio(live.an, live.ctx.sampleRate);
       }
-      live.node = live.ctx.createScriptProcessor(4096, 1, 1);
-      var bufMs = 4096 / live.rate * 1000;
-      live.node.onaudioprocess = function (e) {
-        var d = e.inputBuffer.getChannelData(0), sum = 0, i;
-        for (i = 0; i < d.length; i++) sum += d[i] * d[i];
-        var rms = Math.sqrt(sum / d.length);
+      if (vadTimer) { clearInterval(vadTimer); vadTimer = 0; }
+      var td = new Float32Array(live.an.fftSize);
+      var bufMs = 50;
+      vadTimer = setInterval(function () {
+        if (!live.an || live.muted) return;
+        live.an.getFloatTimeDomainData(td);
+        var sum = 0, i;
+        for (i = 0; i < td.length; i++) sum += td[i] * td[i];
+        var rms = Math.sqrt(sum / td.length);
+        live.lastRms = rms;
+        live.procAt = Date.now();
         if (onLevel) onLevel(Math.min(1, rms * 5));
         if (rms >= SPEECH_RMS) {
           hearing = true; quietMs = 0;
-          seg.push(new Float32Array(d));
+          seg.push(new Float32Array(td));
         } else if (hearing) {
           quietMs += bufMs;
-          seg.push(new Float32Array(d));      /* keep the tail of the word */
+          seg.push(new Float32Array(td));
           if (quietMs >= HANG_MS) { hearing = false; quietMs = 0; sendSegment(onUtterance); }
         }
         if (hearing && seg.length * bufMs > MAX_MS) { hearing = false; quietMs = 0; sendSegment(onUtterance); }
-      };
-      live.src.connect(live.node); live.node.connect(live.ctx.destination);
+      }, bufMs);
       live.on = true; live.muted = false;
       return true;
     } catch (e) {
+      live.lastError = String((e && e.message) || e);
       releaseLive(); live.on = false;
       return false;
     }
@@ -237,9 +290,33 @@ window.PTT = (function () {
   return {
     start: start, stop: stop, isActive: function () { return active; },
     live: startLive, mute: muteLive,
-    isLive: function () { return live.on && !live.muted && !!live.stream; },
+    isLive: function () { return live.on && !live.muted && liveTracksOk(); },
     isMuted: function () { return !!live.muted; },
+    resume: resumeLive,
     /* --smoke reaches in here to prove mute really stops the track */
-    _tracks: function () { return live.stream ? live.stream.getTracks().length : 0; }
+    _tracks: function () { return live.stream ? live.stream.getTracks().length : 0; },
+    _audioState: function () {
+      return {
+        on: !!live.on,
+        muted: !!live.muted,
+        ctx: live.ctx ? live.ctx.state : null,
+        rate: live.rate || 0,
+        hasAnalyser: !!live.an,
+        hasVad: !!vadTimer,
+        lastRms: live.lastRms || 0,
+        procAgeMs: live.procAt ? (Date.now() - live.procAt) : null,
+        lastError: live.lastError || null,
+        tracks: live.stream ? live.stream.getTracks().map(function (t) {
+          var s = {};
+          try { s = t.getSettings ? t.getSettings() : {}; } catch (e) {}
+          return {
+            state: t.readyState, muted: !!t.muted, enabled: t.enabled,
+            label: t.label || '', deviceId: s.deviceId || '',
+            groupId: s.groupId || '', channelCount: s.channelCount,
+            sampleRate: s.sampleRate
+          };
+        }) : []
+      };
+    }
   };
 })();
