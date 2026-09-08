@@ -1,6 +1,6 @@
 /* Ade OS desktop avatar -- a transparent, always-on-top Metatron glyph.
  *
- * It is a CLIENT to Ade OS on 127.0.0.1:8300, deliberately. This process never
+ * It is a CLIENT to the sealed twin on 127.0.0.1:8301, deliberately. This process never
  * spawns a shell of its own -- a second execution path beside the gate is what
  * adeos/permission/gate.py's assert_no_bypass() exists to catch, and it would
  * make the gate decorative.
@@ -18,6 +18,7 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, screen, shell, nativeImage, cli
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { spawn } = require('child_process');
 const { loadThreads, saveThreads } = require('./threads-store');
 const { filesRoot, ensureFilesLayout } = require('./files-store');
 
@@ -27,7 +28,7 @@ const { filesRoot, ensureFilesLayout } = require('./files-store');
    before ready. */
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
-const ADE_BASE = process.env.ADEOS_URL || 'http://127.0.0.1:8300';
+const ADE_BASE = process.env.ADEOS_URL || 'http://127.0.0.1:8301';
 const SMOKE = process.argv.includes('--smoke');
 const CFG_PATH = () => path.join(app.getPath('userData'), 'avatar-state.json');
 
@@ -507,6 +508,14 @@ function buildMenu() {
     { label: 'Open files', click: () => openFilesFolder() },
     { label: 'Open Ade API', click: () => shell.openExternal(ADE_BASE + '/v1/health') },
     { label: 'Restart Ade OS…', click: async () => { const r = await ade('/v1/restart', { method: 'POST', body: {} }); dialogNote(r.ok ? 'Restart requested.' : 'Restart failed: ' + (r.error || r.status)); } },
+    { label: 'Boot twin.', click: () => {
+      const twinLauncher = path.join(__dirname, '..', '..', 'scripts', 'adeos-run-avatar.ps1');
+      const p = spawn('powershell.exe', ['-File', twinLauncher], {
+        detached: true, stdio: 'ignore', windowsHide: true,
+      });
+      p.unref();
+      setTimeout(pollAde, 3000);
+    } },
     { type: 'separator' },
     { label: 'Quit avatar', click: () => { app.quit(); } }
   ]);
@@ -1495,7 +1504,7 @@ function startSmokeRun() {
         && clearArchive.restorePopsArchive;
     } catch (e) { clearArchive = { error: String((e && e.message) || e) }; }
 
-    /* /health end to end: renderer -> ade:call -> the real :8300. Asserts the
+    /* /health end to end: renderer -> ade:call -> the sealed twin on :8301. Asserts the
        reply carries what Ade OS SAID (a status word and a named subsystem)
        rather than a sentence this file could have written by itself. */
     let healthCmd = {};

@@ -10,13 +10,17 @@
     .\run-avatar.ps1 -Status    report whether it is up
     .\run-avatar.ps1 -Stop      stop it
     .\run-avatar.ps1 -Restart   close it if open, then start
+    .\run-avatar.ps1 -NoTwin    skip twin lifecycle
+    .\run-avatar.ps1 -Force     stop despite pending approvals
 #>
 [CmdletBinding()]
 param(
   [switch]$Status,
   [switch]$Stop,
   [switch]$Restart,
-  [string]$AdeUrl = 'http://127.0.0.1:8300'
+  [switch]$NoTwin,
+  [switch]$Force,
+  [string]$AdeUrl = 'http://127.0.0.1:8301'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,6 +30,16 @@ $electron = Join-Path $here 'node_modules\electron\dist\electron.exe'
 function Get-AvatarProcs {
   Get-CimInstance Win32_Process -Filter "Name='electron.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -and $_.CommandLine -like "*$here*" }
+}
+
+$repoRoot = Split-Path (Split-Path $here -Parent) -Parent
+$twinLauncher = Join-Path $repoRoot 'scripts\adeos-run-avatar.ps1'
+$twinData = Join-Path $env:USERPROFILE '.adeos-avatar-workspace'
+
+function Get-TwinPendingApprovals {
+  try {
+    return @(Invoke-RestMethod -Uri "$AdeUrl/v1/approvals" -TimeoutSec 5).approvals.Count
+  } catch { return $null }
 }
 
 if ($Status) {
@@ -51,6 +65,13 @@ function Stop-Avatar {
 
 if ($Stop) {
   [void](Stop-Avatar)
+  if (-not $NoTwin) {
+    $pending = Get-TwinPendingApprovals
+    if ($pending -gt 0 -and -not $Force) {
+      throw "twin has $pending pending approval(s) - pass -Force to stop anyway (approvals end on the twin)"
+    }
+    if (Test-Path $twinLauncher) { & $twinLauncher -Stop }
+  }
   return
 }
 
@@ -58,6 +79,13 @@ if ($Restart) {
   # A second start no-ops and keeps the old process -- so a voice or
   # main.js change never loads. Close first when we mean restart.
   if (Stop-Avatar) { Start-Sleep -Seconds 2 }
+  if (-not $NoTwin) {
+    $pending = Get-TwinPendingApprovals
+    if ($pending -gt 0 -and -not $Force) {
+      throw "twin has $pending pending approval(s) - pass -Force to stop anyway (approvals end on the twin)"
+    }
+    if (Test-Path $twinLauncher) { & $twinLauncher -Stop }
+  }
 }
 
 if (-not (Test-Path $electron)) {
@@ -67,6 +95,25 @@ $running = Get-AvatarProcs
 if ($running) {
   "avatar: already running (pid $($running.ProcessId -join ', ')) - nothing to do"
   return
+}
+
+if (-not $NoTwin) {
+  if (Test-Path $twinLauncher) {
+    & $twinLauncher
+    $up = $false
+    for ($i = 0; $i -lt 90 -and -not $up; $i++) {
+      Start-Sleep -Seconds 1
+      try { $up = ((Invoke-RestMethod -Uri "$AdeUrl/v1/health" -TimeoutSec 2).status -eq 'up') } catch { }
+    }
+    if (-not $up) {
+      $twinLog = Join-Path $twinData 'boot.log'
+      "twin not answering at $AdeUrl - last 20 lines of ${twinLog}:"
+      if (Test-Path $twinLog) { Get-Content -Path $twinLog -Tail 20 }
+      throw 'twin failed to boot - no fallback to :8300, ever'
+    }
+  } else {
+    Write-Host 'twin launcher missing - booting avatar without it' -ForegroundColor Yellow
+  }
 }
 
 $env:ADEOS_URL = $AdeUrl
