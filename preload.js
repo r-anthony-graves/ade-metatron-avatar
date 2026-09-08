@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('adeBridge', {
   speak: (text) => ipcRenderer.invoke('ade:speak', text),
 
   /* ---- chat window surface (both windows may call these) ---- */
+  glyphToggle: () => ipcRenderer.invoke('glyph:toggle'),
   openChat: (tab) => ipcRenderer.send('chat:open', tab),
   hideChat: () => ipcRenderer.send('chat:hide'),
   threadsLoad: () => ipcRenderer.invoke('threads:load'),

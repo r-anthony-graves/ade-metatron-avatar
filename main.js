@@ -632,6 +632,39 @@ ipcMain.on('win:dragEnd', () => {
    it reports whether the cursor is on painted pixels and main acts on it. */
 ipcMain.on('win:hit', (_e, on) => { overPaint = !!on; applyHit(); });
 ipcMain.on('app:menu', () => tray && tray.popUpContextMenu(buildMenu()));
+/* /avatar in the chat window. Toggle, with two honesty rules: a "shown"
+   that lands off every display is a lie, so showing re-clamps into the
+   current primary work area when the saved spot no longer intersects any
+   screen (x:3001 with the side monitor gone was exactly that); and a
+   closed glyph recreates rather than reporting failure -- win goes null on
+   close by design, see createWindow. */
+ipcMain.handle('glyph:toggle', () => {
+  if (!win || win.isDestroyed()) {
+    createWindow();
+    return 'glyph recreated (it had been closed)';
+  }
+  if (win.isVisible()) {
+    win.hide();
+    return 'glyph hidden -- /avatar again to bring it back';
+  }
+  let note = '';
+  const b = win.getBounds();
+  const onSomeScreen = screen.getAllDisplays().some((d) => {
+    const a = d.workArea;
+    return b.x < a.x + a.width && b.x + b.width > a.x
+        && b.y < a.y + a.height && b.y + b.height > a.y;
+  });
+  if (!onSomeScreen) {
+    const area = screen.getPrimaryDisplay().workArea;
+    const nx = area.x + area.width - b.width - 48;
+    const ny = area.y + area.height - b.height - 48;
+    win.setPosition(nx, ny);
+    cfg.x = nx; cfg.y = ny; saveCfg();
+    note = ' (it was parked off-screen at x:' + b.x + ' -- moved onto this display)';
+  }
+  win.show();
+  return 'glyph shown' + note;
+});
 ipcMain.on('app:quit', () => app.quit());
 ipcMain.on('app:copy', (_e, text) => clipboard.writeText(String(text || '')));
 
@@ -656,6 +689,12 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     createTray();
     createChatWindow();
+    /* `--open-chat` (passed by adeos-run-avatar.ps1's Open-AvatarChatWindow):
+       if another instance holds the single-instance lock this process will
+       have quit here already and the running one raises its window via the
+       second-instance handler above; arriving here means we ARE the first
+       instance, so open the conversation window ourselves. */
+    if (process.argv.includes('--open-chat')) setTimeout(openChat, 400);
     pollAde();
     timer = setInterval(pollAde, 2000);
 

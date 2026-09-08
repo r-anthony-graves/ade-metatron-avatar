@@ -207,8 +207,8 @@
     ]).then(function (both) {
       if (activeTab !== 'journal') return;      /* switched away mid-fetch */
       var r = both[0], inv = both[1];
-      standingPrompt = (inv && inv.invitation) || null;
-      paintJournal((r && r.entries) || []);
+      standingPrompt = (inv && inv.data && inv.data.invitation) || null;
+      paintJournal((r && r.data && r.data.entries) || []);
     }).catch(function (err) {
       if (activeTab !== 'journal') return;
       threadEl.innerHTML = '';
@@ -467,6 +467,7 @@
     { name: 'agent', hint: 'Show active trading agents', stub: false },
     { name: 'audit', hint: 'Audit trail', stub: true },
     { name: 'autonomy', hint: 'Show/change autonomy level', stub: false },
+    { name: 'avatar', hint: 'toggle the glyph orb (recreates it if closed)', stub: false },
     { name: 'benchmark', hint: 'Run benchmark', stub: true },
     { name: 'cancel', hint: 'nothing to cancel; clear the input box', stub: false },
     { name: 'cite', hint: 'Cite sources from recent answers', stub: false },
@@ -700,7 +701,7 @@
   async function handleJournalAnswer(c) {
     input.value = '';
     try {
-      await B.call(c.at, 'POST', { text: c.text });
+      await B.call(c.at, 'POST', { answer: c.text });
     } catch (err) {
       var e = document.createElement('div');
       e.className = 'sys';
@@ -1421,6 +1422,17 @@
             handled = true;
           } else if (cmd === 'clear') {
             clearThread(activeTab);
+            handled = true;
+          } else if (cmd === 'avatar') {
+            /* Toggle the glyph orb. The reply comes from main, which is the
+               only process that knows whether the window was hidden, off-
+               screen, or closed -- the chat just repeats its verdict. */
+            B.glyphToggle().then(function (r) {
+              push(activeTab, 'system', 'text',
+                   String(r || 'no reply from the main process'));
+            }).catch(function (err) {
+              push(activeTab, 'system', 'text', 'avatar toggle failed: ' + err);
+            });
             handled = true;
           } else if (cmd === 'def') {
             push(activeTab, 'system', 'text',
