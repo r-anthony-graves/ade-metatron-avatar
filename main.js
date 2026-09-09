@@ -786,6 +786,12 @@ function startSmokeRun() {
         ' var d=c.getContext("2d").getImageData(2,2,40,40).data, n=0;' +
         ' for(var i=3;i<d.length;i+=4) if(d[i]<=10) n++; return n; })() })'
       ));
+      probe.mood = JSON.parse(await win.webContents.executeJavaScript(
+        '(function(){ if(!window.ADE_MOOD) return JSON.stringify({fail:"no ADE_MOOD"});' +
+        ' var f = window.ADE_MOOD.frame(performance.now());' +
+        ' return JSON.stringify({ mood: f.mood, mode: f.mode, burst: f.burst, tint: !!f.tint,' +
+        '   state: window.GLYPH._state() }); })()'
+      ));
       /* prove the speech path end to end: bridge -> Ade -> WAV -> decodable */
       probe.speech = JSON.parse(await win.webContents.executeJavaScript(
         '(async function(){ try {' +
