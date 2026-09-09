@@ -323,3 +323,29 @@ test('a recorded workbook flips to the done card', () => {
   assert.match(wb, /classList\.add\('done'\)/);
   assert.match(wb, /never a verdict/);
 });
+
+test('the journal command opens the tab and says nothing about trading', () => {
+  /* The tab means the Codex journal -- Adé's own record, and now the
+     Pathwork's. The slash command still described a trade journal and
+     answered with a stub line, so one window carried two meanings of the
+     word a keystroke apart. It also declared `stub: false` while its handler
+     printed "stub command", which is a third disagreement.
+
+     Read from the RAW JS, not from codeOnly's output: the point of this
+     guard is the string literals themselves.
+
+     Falsified by restoring the "Trade journal" stub line. */
+  const entry = JS.match(/\{ name: 'journal', hint: '([^']*)'/);
+  assert.ok(entry, 'no journal entry in the command list');
+  assert.doesNotMatch(entry[1], /trade/i);
+
+  const at = JS.indexOf("cmd === 'journal'");
+  assert.ok(at > 0, 'no journal branch in the command handler');
+  /* To the next branch, not a fixed window -- a comment inside this one
+     pushed setTab past a 320-char slice and reddened the guard for the
+     wrong reason. */
+  const next = JS.indexOf('else if (cmd ===', at + 20);
+  const branch = JS.slice(at, next > at ? next : at + 800);
+  assert.match(branch, /setTab\('journal'\)/);
+  assert.doesNotMatch(branch, /trade/i);
+});

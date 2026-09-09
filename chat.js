@@ -1022,7 +1022,7 @@
     { name: 'help', hint: 'list these commands', stub: false },
     { name: 'hover', hint: 'Signature/type at a spot - /hover symbol | file:line[:col]', stub: false },
     { name: 'inspect', hint: 'Inspect internal state', stub: true },
-    { name: 'journal', hint: 'Show trade journal', stub: false },
+    { name: 'journal', hint: 'open the Journal tab - the Codex journal', stub: false },
     { name: 'kill', hint: 'refuses: no trading path connected', stub: true },
     { name: 'learn', hint: 'Analyze trading experience', stub: false },
     { name: 'live', hint: 'Live trading status', stub: true },
@@ -2317,9 +2317,13 @@
             // Analyze trading experience
             push(activeTab, 'system', 'text', 'Learning analysis: stub command - no experience data connected');
             handled = true;
-} else if (cmd === 'journal') {
-            // Show trade journal
-            push(activeTab, 'system', 'text', 'Trade journal: stub command - no journal data connected');
+         } else if (cmd === 'journal') {
+            /* The Journal tab IS the journal -- Ade's Codex record,
+               and the Pathwork's. Switching to it is the whole command;
+               a line describing the journal would be a second and
+               worse answer, and this branch used to print one about
+               TRADING, which the tab has never held. */
+            setTab('journal');
             handled = true;
          } else if (cmd === 'persona') {
             /* Sub-verbs read out of args. Because cmd is parts[0] -- one word
