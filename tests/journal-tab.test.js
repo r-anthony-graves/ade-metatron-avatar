@@ -254,9 +254,12 @@ test('the workbook is styled', () => {
 
 test('the live kind owns the dot and is auto-selected', () => {
   /* Opening the journal greets the owed thing: the invitation's kind gets a
-     live dot and, when no panel was chosen yet, becomes the active kind.
-     Falsified by removing the `activeKind = live` auto-select line or by
-     never toggling the `.live` class. */
+     live dot and, until a panel is actually chosen, becomes the active kind
+     (an auto-select is not a choice -- userPickedKind stays false, so the
+     greeting re-runs on every entry). With nothing owed, the quiet Entries
+     default. Falsified by removing the `activeKind = live` auto-select line,
+     by dropping the `|| 'entries'` fallback, or by never toggling the
+     `.live` class. */
   /* Read from the RAW source, not from `codeOnly`: the toggle's `'live'`
      literal has no 'n', so codeOnly strips it to `toggle('', ...)` -- same
      trap as the 'n'-less route guards and the FRAMING guard. */
@@ -265,6 +268,7 @@ test('the live kind owns the dot and is auto-selected', () => {
   assert.match(pj, /classList\.toggle\('live'/);
   assert.match(pj, /standingPrompt\.kind/);
   assert.match(pj, /activeKind = live/);
+  assert.match(pj, /\|\s*'entries'/);
 });
 
 test('panels dispatch per kind', () => {

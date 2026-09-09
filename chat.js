@@ -33,6 +33,9 @@
      different question if a pass ran in between. */
   var standingPrompt = null;
   var activeKind = 'entries';
+  /* Only a real click on a subtab is a choice; an auto-select is not. The
+     owed thing keeps greeting until Ray picks a panel himself. */
+  var userPickedKind = false;
   function allTabs() { return TABS.concat(READ_TABS); }
   function isRead(tab) { return READ_TABS.indexOf(tab) >= 0; }
   var activeTab = 'chat';
@@ -229,8 +232,9 @@
       var k = bar[i].getAttribute('data-jtab');
       bar[i].classList.toggle('live', k === live);
     }
-    /* Auto-select the owed thing only until Ray chooses a panel himself. */
-    if (activeKind === 'entries' && live) activeKind = live;
+    /* Auto-select greets the owed thing on every entry until Ray chooses a
+       panel himself; with nothing owed, the quiet Entries default. */
+    if (!userPickedKind) activeKind = live || 'entries';
     journalTabMark(activeKind);
     journalPanel(entries, journalDayKey(entries));
   }
@@ -899,6 +903,7 @@
     }
   }
   function setJournalTab(kind) {
+    userPickedKind = true;
     activeKind = kind;
     journalTabMark(kind);
     renderJournal();
