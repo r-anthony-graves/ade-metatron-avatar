@@ -121,3 +121,65 @@ test('the wake path startles the mood core', () => {
   assert.match(body, /ADE_MOOD\.event\('wake'\)/,
     'waking Ade must also flash the startled mood');
 });
+
+/* ---- Task 5: glyph renderer — per-mood palettes, bursts, mode baselines ---- */
+
+const GLYPH = read('glyph.js');
+
+test('glyph pulls the mood frame every rAF and degrades to raw rendering', () => {
+  assert.match(GLYPH, /window\.ADE_MOOD\s*&&\s*window\.ADE_MOOD\.frame/,
+    'glitch must pull ADE_MOOD.frame each animation frame');
+  assert.match(GLYPH, /MOODS\.mood|MOODS\[MOOD\.mood\]/,
+    'the per-mood palette table must be consulted for the live mood');
+  assert.match(GLYPH, /var MOODS\s*=\s*\{[\s\S]*?hot:/,
+    'the per-mood palette table must define a hot colour per mood');
+});
+
+test('mood overrides the resonance target only when active', () => {
+  const i = GLYPH.indexOf('ADE.step = function(dt)');
+  assert.ok(i >= 0);
+  const body = GLYPH.slice(i, i + 260);
+  assert.match(body, /MOOD\.mood\s*\?\s*MOODS\[MOOD\.mood\]\.res/,
+    'an active mood must set the energy target; idle falls back to raw state logic');
+});
+
+test('the core leans on the mood palette for HOT and MID', () => {
+  const i = GLYPH.indexOf('function drawCore(t, u, res, asm)');
+  assert.ok(i >= 0);
+  const body = GLYPH.slice(i, i + 560);
+  assert.match(body, /MOOD\.mood\s*\?\s*MOOD\.hot/,
+    'an active mood must color the core HOT');
+  assert.match(body, /MOOD\.mood\s*\?\s*MOOD\.mid/,
+    'an active mood must color the core MID');
+});
+
+test('startle and satisfy ride the base size through MOOD.burst', () => {
+  const i = GLYPH.indexOf('function drawCore(t, u, res, asm)');
+  const body = GLYPH.slice(i, i + 1750);
+  assert.match(body, /MOOD\.burst/,
+    'burst must feed the core base so events visibly flash');
+});
+
+test('the volumetric halo follows the mood palette when active', () => {
+  const i = GLYPH.indexOf('function drawVolumetrics(t, res, asm)');
+  assert.ok(i >= 0);
+  const body = GLYPH.slice(i, i + 400);
+  assert.match(body, /MOOD\.mood/,
+    'mood must tint the halo');
+});
+
+test('mode baselines exist in the preset surface', () => {
+  assert.match(GLYPH, /'ask-first'/,
+    'the ask-first baseline (fixed ring) must be present');
+  assert.match(GLYPH, /'dev'/,
+    'the dev metronome baseline must be present');
+});
+
+test('_state reports mood, mode, burst and tint', () => {
+  const i = GLYPH.indexOf('_state: function()');
+  assert.ok(i >= 0);
+  const body = GLYPH.slice(i, i + 300);
+  ['mood:', 'mode:', 'burst:', 'tint:'].forEach(function (k) {
+    assert.match(body, new RegExp(k), '_state must expose ' + k);
+  });
+});

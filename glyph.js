@@ -68,7 +68,9 @@ ADE.apply = function(st){
   this.pending = st.pending|0; this.brain = st.brain||'';
 };
 ADE.step = function(dt){
-  var target = !this.online ? 0.04 : (this.pending>0 ? 0.94 : (this.busy ? 0.74 : 0.22));
+  var target = !this.online ? 0.04
+    : (MOOD.mood ? MOODS[MOOD.mood].res
+       : (this.pending > 0 ? 0.94 : (this.busy ? 0.74 : 0.22)));
   this.res += (target - this.res) * (1 - Math.exp(-dt/0.85));
   /* the spoken waveform is the avatar's mouth: fast attack so consonants land,
      slower release so it does not strobe between syllables */
@@ -87,6 +89,46 @@ ADE.step = function(dt){
      never blinks on an incidental mute */
   this.micLit += ((MIC_OPEN ? 1 : 0) - this.micLit) * (1 - Math.exp(-dt/0.10));
 };
+
+/* -------------------------------------------------------------- moods */
+/* A mood names the SHAPE Ade's ground truth takes this moment. Raw state and
+   events decide it (mood.js); the renderer only owns the look. MOODS is the
+   per-mood palette + motion; MOOD holds the live frame the rAF loop pulls.
+   With no mood active the orb renders exactly as it always has. */
+var MOODS = {
+  dormant:   { res: 0.05, hot: STEEL,     mid: STEEL,     halo: STEEL,  breathe: 0.10, spiral: 0.0 },
+  attentive: { res: 0.35, hot: LISTENH,   mid: LISTEN,    halo: LISTEN, breathe: 0.22, spiral: 0.6 },
+  thinking:  { res: 0.80, hot: GOLDH,     mid: GOLD,      halo: GOLD,   breathe: 0.28, spiral: 1.6 },
+  speaking:  { res: 0.62, hot: GOLDH,     mid: GOLD,      halo: GOLD,   breathe: 0.30, spiral: 0.6 },
+  satisfied: { res: 0.55, hot: GOLDH,     mid: GOLD,      halo: GOLD,   breathe: 0.18, spiral: 0.3 },
+  startled:  { res: 0.90, hot: WHITE,     mid: GOLDH,     halo: WHITE,  breathe: 0.60, spiral: 0.9 },
+  troubled:  { res: 0.18, hot: ALERT,     mid: STEEL,     halo: ALERT,  breathe: 0.30, spiral: 0.15 }
+};
+var MOOD = { mood: null, mode: 'auto', burst: 0, tint: null, flick: 0,
+             hot: GOLDH, mid: GOLD, halo: GOLD, ambient: 0, ember: 0 };
+function mul3(c, tt) {
+  return [clamp(c[0] * tt.r, 0, 255), clamp(c[1] * tt.g, 0, 255), clamp(c[2] * tt.b, 0, 255)];
+}
+function moodPalette() {
+  var m = MOOD.mood && MOODS[MOOD.mood];
+  if (!m || !MOOD.tint) { MOOD.hot = m ? m.hot : GOLDH; MOOD.mid = m ? m.mid : GOLD; MOOD.halo = m ? m.halo : GOLD; return; }
+  var k = m ? MOOD.burst : 0;
+  MOOD.hot  = mul3(mix(m.hot,  WHITE, k * 0.55), MOOD.tint);
+  MOOD.mid  = mul3(mix(m.mid,  GOLDH, k * 0.35), MOOD.tint);
+  MOOD.halo = mul3(mix(m.halo, WHITE, k * 0.40), MOOD.tint);
+}
+function pullMood() {
+  if (window.ADE_MOOD && window.ADE_MOOD.frame) {
+    var f = window.ADE_MOOD.frame(performance.now());
+    if (!f || !MOODS[f.mood]) { MOOD.mood = null; MOOD.burst = 0; MOOD.tint = null; }
+    else {
+      MOOD.mood = f.mood; MOOD.mode = f.mode || 'auto';
+      MOOD.burst = clamp(f.burst || 0, 0, 1);
+      MOOD.tint = f.tint || null; MOOD.flick = MOOD.tint ? (MOOD.tint.f ? 1 : 0) : 0;
+    }
+  } else { MOOD.mood = null; MOOD.burst = 0; MOOD.tint = null; }
+  moodPalette();
+}
 
 /* -------------------------------------------------- arming, without chrome */
 /* No button and no readout: the microphone is offered on load and, if the
@@ -585,9 +627,12 @@ function drawVolumetrics(t, res, asm){
   var hv = LIGHT ? 0.40 : 1;       /* on light stock this warms, it must not whiten */
   var halo = 300*S*(0.55+0.9*res)*(0.3+0.7*asm)*(focal/900)*(LIGHT?0.82:1);
   var hg = ctx.createRadialGradient(c.x,c.y,0,c.x,c.y,halo);
-  hg.addColorStop(0,    rgba(LIGHT?GOLD:GOLDH, (0.20*res+0.05)*hv));
-  hg.addColorStop(0.16, rgba(LIGHT?BLUEH:GOLD, (0.11*res+0.03)*hv));
-  hg.addColorStop(0.44, rgba(BLUE,  (0.055*res+0.015)*hv));
+  var h0 = MOOD.mood ? MOOD.halo : (LIGHT ? GOLD : GOLDH);
+  var h1 = MOOD.mood ? mix(MOOD.halo, BLUEH, 0.45) : (LIGHT ? BLUEH : GOLD);
+  var h2 = MOOD.mood ? mix(MOOD.halo, BLUE, 0.6) : BLUE;
+  hg.addColorStop(0,    rgba(h0, (0.20*res+0.05)*hv));
+  hg.addColorStop(0.16, rgba(h1, (0.11*res+0.03)*hv));
+  hg.addColorStop(0.44, rgba(h2, (0.055*res+0.015)*hv));
   hg.addColorStop(1,    rgba(BLUE, 0));
   ctx.fillStyle=hg; ctx.beginPath(); ctx.arc(c.x,c.y,halo,0,TAU); ctx.fill();
 
@@ -599,7 +644,7 @@ function drawVolumetrics(t, res, asm){
     var len = halo*(0.55+0.45*Math.abs(Math.sin(i*1.7 + u*TAU*2)))*(0.5+0.5*res);
     var wdt = (2.2+2.6*Math.sin(i*3.1))*S;
     var lg = ctx.createLinearGradient(0,0,Math.cos(a)*len,Math.sin(a)*len);
-    var cl = i%3===0?(LIGHT?GOLD:GOLDH):BLUEH;
+    var cl = MOOD.mood ? MOOD.halo : (i % 3 === 0 ? (LIGHT ? GOLD : GOLDH) : BLUEH);
     lg.addColorStop(0, rgba(cl, 0.115*res*asm*hv));
     lg.addColorStop(1, rgba(cl, 0));
     ctx.fillStyle=lg;
@@ -661,12 +706,14 @@ function drawRings(t, u, res, asm){
   var spinGate = ss(2.6, 7, t) * 0.55 + 0.45;      /* rings spin up in the 3-7s window */
   for(var i=0;i<RINGS.length;i++){
     var rr=RINGS[i], gl=stageGlow(u,i);
-    var spin = TAU*rr.turns*u*spinGate;
+    var spin = TAU*rr.turns*u*spinGate
+      * (1 + (MOOD.mood ? MOODS[MOOD.mood].spiral : 0) * 0.12);
+    if (MOOD.mode === 'ask-first' && !MOOD.mood) rr._calmA = 0.16; else rr._calmA = 0;
     var pts=rr.proj;
     for(var j=0;j<rr.angles.length;j++){
       pts[j] = P(ringPoint(rr, rr.angles[j]+spin, scale), 0, false, pts[j] || {});
     }
-    var a = (0.32 + 0.50*res + 0.55*gl) * asm;
+    var a = (0.32 + 0.50*res + 0.55*gl) * asm + (rr._calmA || 0);
     strokeBanded(pts, rr.col, 1.05+0.9*gl, a, true);
   }
   ctx.globalAlpha=1;
@@ -975,8 +1022,8 @@ function drawCore(t, u, res, asm){
   var pmul = AUDIO.on ? (0.70 + 0.90*AUDIO.tone) : 1;
   var pulse = 0.5+0.5*Math.sin(TAU*(u*54*pmul));
   var warmth = AUDIO.on ? ss(0.35, 0.95, AUDIO.tone) : 0;
-  var HOT = warmth>0 ? mix(GOLDH, BLUEH, warmth) : GOLDH;
-  var MID = warmth>0 ? mix(GOLD,  CYAN,  warmth) : GOLD;
+  var HOT = MOOD.mood ? MOOD.hot : (warmth > 0 ? mix(GOLDH, BLUEH, warmth) : GOLDH);
+  var MID = MOOD.mood ? MOOD.mid : (warmth > 0 ? mix(GOLD, CYAN, warmth) : GOLD);
   if(AVATAR){
     if(!ADE.online){ HOT = mix(HOT, STEEL, 0.78); MID = mix(MID, STEEL, 0.78); }
     /* the core itself cools while your voice is arriving -- a ring at the edge is
@@ -988,8 +1035,11 @@ function drawCore(t, u, res, asm){
     }
     if(ADE.alert > 0.01){ HOT = mix(HOT, ALERT, ADE.alert*0.85); MID = mix(MID, ALERT, ADE.alert*0.85); }
   }
-  var breathe = 1 + 0.20*pulse*(0.35+0.85*res);
-  var base = 14.5*S*(focal/900)*(0.55+0.75*res)*breathe*(0.25+0.75*asm)*(1+0.34*AUDIO.flash+0.30*wakeKick());
+  var breatheAmp = MOOD.mood ? MOODS[MOOD.mood].breathe : 0.20;
+  var devTick = MOOD.mode === 'dev' ? 0.9 + 0.1 * Math.sin(NOWS * 6) : 1;
+  var flickK = MOOD.flick ? 0.85 + 0.15 * Math.sin(NOWS * 20) : 1;
+  var breathe = flickK * (1 + breatheAmp * pulse * (0.35 + 0.85 * res) * devTick);
+  var base = 14.5*S*(focal/900)*(0.55+0.75*res)*breathe*(0.25+0.75*asm)*(1+0.34*AUDIO.flash+0.30*wakeKick()+0.55*MOOD.burst+0.40*MOOD.ember);
 
   /* concentric energy waves: three orthogonal fronts read as a sphere */
   if(res>0.45){
@@ -1150,6 +1200,14 @@ function frame(now){
 
   u = flow(t); res = resonance(t); asm = assembly(t);
   if(AVATAR){
+    pullMood();
+    /* Ember drift: in auto mode a quiet orb self-sparks every 20-40s. It stays
+       on its own glyph-local channel because pullMood() rewrites MOOD.burst from
+       the mood frame every rAF -- an ember written there would vanish next frame. */
+    MOOD.ember -= dt;
+    if (!MOOD.mood && MOOD.mode === 'auto' && ADE.online && MOOD.ember <= 0) {
+      MOOD.ember = 0.6; MOOD.ambient = 20 + Math.random() * 20;
+    }
     ADE.step(dt);
     /* state leads; either voice overrides it. Yours lifts the orb less far than
        Ade's own does -- so the two stay distinguishable by ENERGY as well as by
@@ -1157,6 +1215,7 @@ function frame(now){
        made the orb blaze while you talking left it sitting at idle, which is
        most of what "it doesn't react to me" was. */
     res = Math.max(res*0.35, ADE.res, ADE.speaking*0.92, ADE.hearing*0.72);
+    res = Math.min(1, res + MOOD.burst * 0.15 + MOOD.ember * 0.1);
     if(ADE.alert > 0.55){
       ADE.spark -= dt;
       if(ADE.spark <= 0){ spawnOnset(NOWS); ADE.spark = 0.22 + 0.25*(1-ADE.alert); }
@@ -1226,7 +1285,8 @@ window.GLYPH = {
      from the far side of a screenshot */
   _state: function(){ return { mic: MIC_OPEN, micLit: ADE.micLit,
     hearing: ADE.hearing, speaking: ADE.speaking, audio: !!(AUDIO.on && AUDIO.an),
-    level: AUDIO.level || 0, env: AUDIO.env || 0 }; },
+    level: AUDIO.level || 0, env: AUDIO.env || 0,
+    mood: MOOD.mood, mode: MOOD.mode, burst: +MOOD.burst.toFixed(3), tint: !!MOOD.tint }; },
   arm: function(){ tryArm(); },
   isArmed: function(){ return AUDIO.on; }
 };
