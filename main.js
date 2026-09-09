@@ -39,7 +39,7 @@ let chatWin = null;                 /* the desktop conversation window */
    never got that hover event stayed permanently click-through. */
 let overPaint = true, lastIgnore = null;
 let cfg = { x: null, y: null, size: 380, clickThrough: false, speak: false, opacity: 1, backing: true, mic: true,
-            chatX: null, chatY: null, chatW: 900, chatH: 620 };
+            mode: 'auto', chatX: null, chatY: null, chatW: 900, chatH: 620 };
 let micLive = false;   /* what the renderer last reported, for the tray label */
 let state = { online: false, busy: false, pending: 0, brain: '', approval: null };
 
@@ -328,7 +328,7 @@ async function pollAde() {
       }
     }
   }
-  state = { online, busy, pending, brain, approval };
+  state = { online, busy, pending, brain, approval, mode: cfg.mode };
   if (win && !win.isDestroyed()) win.webContents.send('ade:state', state);
   if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.send('ade:state', state);
   if (tray) {
@@ -491,6 +491,14 @@ function buildMenu() {
       toolTip: 'A soft dark halo so the glyph reads on a pale wallpaper. Off is pure transparency.',
       click: (mi) => { cfg.backing = mi.checked; saveCfg(); if (win) win.webContents.send('ui:backing', mi.checked); }
     },
+    { label: 'Mode', submenu: [
+      { label: 'Auto', type: 'radio', checked: (cfg.mode || 'auto') === 'auto',
+        click: () => { cfg.mode = 'auto'; saveCfg(); pollAde(); } },
+      { label: 'Ask-first', type: 'radio', checked: cfg.mode === 'ask-first',
+        click: () => { cfg.mode = 'ask-first'; saveCfg(); pollAde(); } },
+      { label: 'Dev', type: 'radio', checked: cfg.mode === 'dev',
+        click: () => { cfg.mode = 'dev'; saveCfg(); pollAde(); } }
+    ] },
     {
       label: 'Size', submenu: [280, 340, 380, 460, 560].map(px => ({
         label: px + ' px', type: 'radio', checked: cfg.size === px,

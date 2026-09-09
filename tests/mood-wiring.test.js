@@ -183,3 +183,31 @@ test('_state reports mood, mode, burst and tint', () => {
     assert.match(body, new RegExp(k), '_state must expose ' + k);
   });
 });
+
+/* ---- Task 6: autonomous mode setting (tray radio + state payload) ---- */
+
+test('cfg defaults to auto mode', () => {
+  const i = MAIN.indexOf('let cfg = {');
+  assert.ok(i >= 0);
+  const body = MAIN.slice(i, i + 200);
+  assert.match(body, /mode:\s*'auto'/,
+    'an existing config without the key must still read as auto mode');
+});
+
+test('poll state carries the mode to both windows', () => {
+  const i = MAIN.indexOf('state = { online, busy, pending, brain, approval');
+  assert.ok(i >= 0);
+  assert.match(MAIN.slice(i, i + 90), /mode:\s*cfg\.mode/,
+    'the ade:state payload must include the operating mode');
+});
+
+test('the tray menu exposes the three modes', () => {
+  assert.match(MAIN, /label:\s*'Mode'/,
+    'a Mode submenu must exist in the tray');
+  ['auto', 'ask-first', 'dev'].forEach(function (m) {
+    assert.match(MAIN, new RegExp('cfg.mode = \'' + m + '\''),
+      'the tray must be able to set mode ' + m);
+  });
+  assert.match(MAIN, /type:\s*'radio'/,
+    'the mode menu must be a radio group');
+});
