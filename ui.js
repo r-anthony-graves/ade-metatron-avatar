@@ -156,6 +156,7 @@
       return;
     }
     if (window.GLYPH && window.GLYPH.wake) window.GLYPH.wake();
+    if (window.ADE_MOOD) window.ADE_MOOD.event('wake');
     if (B) B.saySpeech({ text: command, engine: u.engine || '', empty: !command });
   }
   window.__onUtterance = onUtterance;
@@ -179,12 +180,21 @@
 
   /* ------------------------------------------------------ Ade's state in */
   if (B) {
-    B.onState(function (s) { if (window.GLYPH) window.GLYPH.setAde(s); });
+    B.onState(function (s) {
+      if (window.ADE_MOOD) window.ADE_MOOD.feed(s);
+      if (window.GLYPH) window.GLYPH.setAde(s);
+    });
     B.onArm(function () { if (window.GLYPH) window.GLYPH.arm(); });
     B.onSpeak(function (t) { speakText(t); });
     B.onHush(function () { stopSpeaking(); });
     B.onPttDown(function () { pttDown(); });
     B.onPttUp(function () { pttUp(); });
+    B.onGlyphEvent(function (type) {
+      if (window.ADE_MOOD) window.ADE_MOOD.event(type);
+    });
+    B.onGlyphTint(function (payload) {
+      if (window.ADE_MOOD) window.ADE_MOOD.tint(payload);
+    });
     B.onBacking(function (on) { if (window.GLYPH) window.GLYPH.setBacking(on); });
 
     /* ------------------------------------------------ the live mic */

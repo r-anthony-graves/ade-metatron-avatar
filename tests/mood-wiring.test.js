@@ -77,3 +77,47 @@ test('a failed voice action reads raise a troubled event', () => {
   assert.match(body, /glyphEvent\('failed'\)/,
     'a failed voice action read must tell the glyph to be troubled');
 });
+
+const AVATAR_HTML = read('avatar.html');
+const CHAT_HTML = read('chat.html');
+const UI = read('ui.js');
+
+test('mood.js loads in the glyph window before glyph.js and ui.js', () => {
+  const i = AVATAR_HTML.indexOf('<script src="glyph.js">');
+  const j = AVATAR_HTML.indexOf('<script src="ui.js">');
+  assert.ok(i >= 0 && j > i);
+  const scripts = AVATAR_HTML.slice(0, i);
+  assert.match(scripts, /mood\.js/,
+    'glyph window must load mood.js (before glyph.js) so the rAF loop can pull frames');
+});
+
+test('mood.js loads in the chat window before chat.js', () => {
+  const i = CHAT_HTML.indexOf('<script src="chat.js">');
+  assert.ok(i >= 0);
+  const before = CHAT_HTML.slice(0, i);
+  assert.match(before, /mood\.js/,
+    'chat window must load mood.js so speakText can score replies');
+});
+
+test('ui.js feeds the mood core from every poll', () => {
+  const i = UI.indexOf('B.onState(function');
+  assert.ok(i >= 0);
+  const body = UI.slice(i, i + 200);
+  assert.match(body, /ADE_MOOD\.feed\(s\)/,
+    'every poll must re-decide the resting mood');
+});
+
+test('ui.js routes glyph events and tints into the mood core', () => {
+  assert.match(UI, /B\.onGlyphEvent\(function\s*\(type\)\s*\{[\s\S]{0,80}ADE_MOOD\.event\(type\)/,
+    'glyph events must reach ADE_MOOD.event');
+  assert.match(UI, /B\.onGlyphTint\(function\s*\(payload\)\s*\{[\s\S]{0,80}ADE_MOOD\.tint\(payload\)/,
+    'glyph tints must reach ADE_MOOD.tint');
+});
+
+test('the wake path startles the mood core', () => {
+  const i = UI.indexOf('window.GLYPH.wake');
+  assert.ok(i >= 0);
+  const body = UI.slice(i, i + 120);
+  assert.match(body, /ADE_MOOD\.event\('wake'\)/,
+    'waking Ade must also flash the startled mood');
+});
