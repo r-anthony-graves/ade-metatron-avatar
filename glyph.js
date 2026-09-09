@@ -1203,9 +1203,10 @@ function frame(now){
     pullMood();
     /* Ember drift: in auto mode a quiet orb self-sparks every 20-40s. It stays
        on its own glyph-local channel because pullMood() rewrites MOOD.burst from
-       the mood frame every rAF -- an ember written there would vanish next frame. */
+       the mood frame every rAF -- an ember written there would vanish next frame.
+       Gated on the mood core: without ADE_MOOD the orb renders exactly as legacy. */
     MOOD.ember -= dt;
-    if (!MOOD.mood && MOOD.mode === 'auto' && ADE.online && MOOD.ember <= 0) {
+    if (!MOOD.mood && MOOD.mode === 'auto' && window.ADE_MOOD && ADE.online && MOOD.ember <= 0) {
       MOOD.ember = 0.6; MOOD.ambient = 20 + Math.random() * 20;
     }
     ADE.step(dt);
