@@ -221,7 +221,9 @@
   }
   function paintJournal(entries) {
     threadEl.innerHTML = '';
-    if (standingPrompt && standingPrompt.text) threadEl.appendChild(promptCard());
+    if (standingPrompt && standingPrompt.text) {
+      threadEl.appendChild(promptCard(journalDayKey(entries)));
+    }
     if (!entries.length) {
       var none = document.createElement('div');
       none.className = 'sys';
@@ -240,32 +242,259 @@
     }
     threadEl.scrollTop = threadEl.scrollHeight;
   }
+  /* Sometimes the Codex asks; sometimes the Codex notices, distinguishes or
+     sets a riddle. One card, rendered by the invitation's KIND, because the
+     payload each kind wants and the context each can unfold are different.
+     The framing line is Ade's own voice; the date comes from the journal's
+     `day` entry -- a server period_key, never the client's clock. */
+  var FRAMING = {
+    quest: 'The deep has opened a door for you.',
+    reflection: 'This one has been sitting with me since it happened.',
+    pattern: 'I keep noticing this, and noticing is not deciding.',
+    puzzle: 'A riddle, not an order -- only when nothing else is owed.'
+  };
+  function frameFor(kind) { return FRAMING[kind] || 'The Codex is asking something of you.'; }
+  function journalDayKey(entries) {
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i] && entries[i].period === 'day' && entries[i].period_key) {
+        return String(entries[i].period_key);
+      }
+    }
+    return '';
+  }
+  /* The one place the different answer shapes are decided. The composer and
+     the card's send button both go through this, so a quest is never posted
+     as { answer } and a puzzle never as { response }. */
+  function workbookBody(kind, fields) {
+    fields = fields || {};
+    var text = String(fields.text || '');
+    var noticed = String(fields.noticed || '');
+    switch (kind) {
+      case 'quest':
+        return { response: text, noticed: noticed,
+                 deepen: String(fields.deepen || '') };
+      case 'pattern':
+        return { decision: String(fields.decision || ''),
+                 null_hypothesis: String(fields.null_hypothesis || ''),
+                 rejected_because: String(fields.rejected_because || text) };
+      case 'puzzle':
+        return { attempt: text };
+      case 'reflection':
+      default:
+        /* the reflect route reads ONE answer field; the noticed folds in as
+           a labelled tail so it is not lost. */
+        return { answer: noticed
+          ? (text + '\n\nWhat I noticed: ' + noticed) : text };
+    }
+  }
+  function detailRouteFor(kind) {
+    switch (kind) {
+      case 'quest': return '/v1/codex/quests/' + (standingPrompt.slug || '');
+      case 'reflection': return '/v1/codex/reflect/' + (standingPrompt.id || '');
+      case 'pattern': return '/v1/codex/patterns';
+      case 'puzzle': return '/v1/codex/puzzles/' + (standingPrompt.id || '');
+      default: return null;
+    }
+  }
   /* What the Codex is asking, and what answering it costs. Rendered as a
      card rather than a system line because it is the one thing on this tab
      Ray is meant to act on. */
-  function promptCard() {
+  function promptCard(dayKey) {
     var wrap = document.createElement('div');
-    wrap.className = 'msg ade approval';
-    var head = document.createElement('div');
-    head.className = 'meta';
-    head.textContent = 'The Codex is asking · ' + (standingPrompt.kind || '');
-    wrap.appendChild(head);
-    if (standingPrompt.subject) {
-      var sub = document.createElement('div');
-      sub.className = 'meta';
-      sub.textContent = 'on: ' + standingPrompt.subject;
-      wrap.appendChild(sub);
-    }
+    wrap.className = 'msg ade approval workbook';
+    var kind = standingPrompt.kind || '';
+    var frame = document.createElement('div');
+    frame.className = 'meta';
+    frame.textContent = frameFor(kind);
+    wrap.appendChild(frame);
     var q = document.createElement('div');
     q.textContent = standingPrompt.text;
     wrap.appendChild(q);
-    var how = document.createElement('div');
-    how.className = 'meta';
-    how.textContent = standingPrompt.answer_at
-      ? 'Type your answer below and press Enter.'
-      : 'Nothing to answer here — this one is read in its own view.';
-    wrap.appendChild(how);
+    /* The quest carries a central question the node is a step toward; the
+       invitation does not ship it, so the card fetches the board for it. */
+    var central = null;
+    if (kind === 'quest' && standingPrompt.slug) {
+      central = document.createElement('div');
+      central.className = 'meta wb-central';
+      central.textContent = 'standing under it…';
+      wrap.appendChild(central);
+      B.call('/v1/codex/quests/' + standingPrompt.slug, 'GET', null).then(function (r) {
+        var board = (r && r.data && r.data.quest) || {};
+        if (board.central_question) central.textContent = board.central_question;
+        wrap._board = board;
+      }).catch(function () { central.textContent = ''; });
+    }
+    var dateLine = document.createElement('div');
+    dateLine.className = 'meta';
+    dateLine.textContent = '── ' + (dayKey || '') + ' ──';
+    wrap.appendChild(dateLine);
+    /* The main field: a freeform textarea for every kind but pattern, which
+       wants a decision with two labelled halves (its rejected_because IS the
+       freeform). */
+    var textId = kind === 'pattern' ? 'wb-rejected' : 'wb-main';
+    var textEl = document.createElement('textarea');
+    textEl.className = 'wb ' + textId;
+    textEl.placeholder = kind === 'pattern'
+      ? 'why the boring explanation does not fit…'
+      : 'your answer to the question…';
+    wrap.appendChild(textEl);
+    if (kind === 'quest') {
+      var noticed = document.createElement('input');
+      noticed.className = 'wb wb-noticed';
+      noticed.type = 'text';
+      noticed.placeholder = 'what I noticed…';
+      wrap.appendChild(noticed);
+      var deepen = document.createElement('input');
+      deepen.className = 'wb wb-deepen';
+      deepen.type = 'text';
+      deepen.placeholder = 'a better question, if one surfaced…';
+      wrap.appendChild(deepen);
+    } else if (kind === 'reflection') {
+      var noted = document.createElement('input');
+      noted.className = 'wb wb-noticed';
+      noted.type = 'text';
+      noted.placeholder = 'what I noticed…';
+      wrap.appendChild(noted);
+    } else if (kind === 'pattern') {
+      var nh = document.createElement('input');
+      nh.className = 'wb wb-null';
+      nh.type = 'text';
+      nh.placeholder = 'the boring explanation (the null hypothesis)…';
+      wrap.appendChild(nh);
+      var decisionRow = document.createElement('div');
+      decisionRow.className = 'wb-decide';
+      [['pattern', 'It is a pattern'], ['coincidence', 'It is a coincidence']]
+        .forEach(function (pair) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = pair[1];
+          btn.className = 'wb-choice';
+          btn.addEventListener('click', function () {
+            wrap._decision = pair[0];
+            [].forEach.call(wrap.querySelectorAll('.wb-choice'), function (b) {
+              b.style.borderColor = '#f5a623';
+            });
+            btn.style.borderColor = '#6e9a35';
+          });
+          decisionRow.appendChild(btn);
+        });
+      wrap.appendChild(decisionRow);
+    }
+    var actions = document.createElement('div');
+    actions.className = 'wb-actions';
+    var unfold = document.createElement('button');
+    unfold.type = 'button';
+    unfold.className = 'wb-unfold';
+    unfold.textContent = 'unfold ▾';
+    unfold.addEventListener('click', function () {
+      var zone = wrap.querySelector('.wb-unfolded');
+      if (!zone) {
+        zone = document.createElement('div');
+        zone.className = 'wb-unfolded';
+        wrap.appendChild(zone);
+      }
+      if (zone.classList.contains('open')) { zone.classList.remove('open'); return; }
+      zone.textContent = 'standing under it…';
+      zone.classList.add('open');
+      var route = detailRouteFor(kind);
+      if (!route) {
+        zone.textContent = 'Nothing more to unfold here.';
+        return;
+      }
+      B.call(route, 'GET', null).then(function (r) {
+        var d = (r && r.data) || {};
+        zone.textContent = '';
+        zone.appendChild(unfoldedProse(kind, d));
+      }).catch(function () {
+        zone.textContent = 'The context would not unfold.';
+      });
+    });
+    actions.appendChild(unfold);
+    var submit = document.createElement('button');
+    submit.type = 'button';
+    submit.className = 'wb-submit';
+    submit.textContent = kind === 'pattern' ? 'decide' : 'send';
+    submit.addEventListener('click', function () {
+      sendWorkbook(kind, wrap);
+    });
+    actions.appendChild(submit);
+    wrap.appendChild(actions);
     return wrap;
+  }
+  /* Unfold's payload, in Ade's voice, from the kind's own detail route.
+     Quest unrevealed clues are a COUNT -- their text is served only when the
+     server reveals one (quests.py burns a clue by serving it). */
+  function unfoldedProse(kind, d) {
+    var p = document.createElement('div');
+    var head = document.createElement('div');
+    head.className = 'meta';
+    head.textContent = 'why this one --';
+    p.appendChild(head);
+    var line = document.createElement('div');
+    if (kind === 'quest') {
+      var board = d.quest || {};
+      var open = (board.nodes || []).filter(function (n) {
+        return n.state === 'OPEN' || n.state === 'ATTEMPTED';
+      })[0];
+      var body = open ? open.body : (board.central_question || '');
+      line.textContent = body
+        ? (body + ' ' + board.locked_ahead + ' descent(s) wait below.')
+        : board.locked_ahead + ' descent(s) wait below.';
+      p.appendChild(line);
+      var clues = document.createElement('div');
+      clues.className = 'meta';
+      clues.textContent = open && open.clues_unrevealed
+        ? open.clues_unrevealed + ' clue(s) rest unrevealed in this descent.'
+        : 'no clues rest here.';
+      p.appendChild(clues);
+      return p;
+    } else if (kind === 'pattern') {
+      var row = (d.patterns || []).filter(function (x) { return x.id === standingPrompt.id; })[0];
+      line.textContent = row
+        ? 'seen ' + row.occurrences + ' time(s) across domain "' + row.domain + '".'
+        : 'the pattern list would not unfold.';
+      p.appendChild(line);
+    } else if (kind === 'puzzle') {
+      var pu = d.puzzle || {};
+      line.textContent = pu.attempts !== undefined
+        ? pu.attempts + ' attempt(s) so far; a hint opens after '
+          + (pu.attempts_before_hint || 'some') + ', and it costs.'
+        : 'a hash comparison -- the answer is never on the wire.';
+      p.appendChild(line);
+    } else {
+      var rf = d.reflection || {};
+      line.textContent = rf.trigger
+        ? 'trigger: ' + rf.trigger + '. depth ' + (rf.depth_reached || 0) + '.'
+        : 'a reflection, answered in your own words.';
+      p.appendChild(line);
+    }
+    return p;
+  }
+  function sendWorkbook(kind, wrap) {
+    var mainEl = wrap.querySelector('.wb-main, .wb-rejected');
+    var body = workbookBody(kind, {
+      text: mainEl ? mainEl.value : '',
+      noticed: wrap.querySelector('.wb-noticed')
+        ? wrap.querySelector('.wb-noticed').value : '',
+      deepen: wrap.querySelector('.wb-deepen')
+        ? wrap.querySelector('.wb-deepen').value : '',
+      null_hypothesis: wrap.querySelector('.wb-null')
+        ? wrap.querySelector('.wb-null').value : '',
+      rejected_because: wrap.querySelector('.wb-rejected')
+        ? wrap.querySelector('.wb-rejected').value : '',
+      decision: wrap._decision || ''
+    });
+    var at = standingPrompt.answer_at || standingPrompt.attempt_at;
+    B.call(at || '', 'POST', body).then(function () {
+      speakText('enterred below the surface.');
+      renderJournal();
+    }).catch(function (err) {
+      var e = document.createElement('div');
+      e.className = 'sys';
+      e.textContent = 'The answer was not recorded: ' + (err && err.message
+                        ? err.message : String(err));
+      threadEl.appendChild(e);
+    });
   }
   function journalEntry(entry) {
     var wrap = document.createElement('div');
@@ -700,8 +929,13 @@
      question in the meantime cannot receive this one. */
   async function handleJournalAnswer(c) {
     input.value = '';
+    var kind = (standingPrompt && standingPrompt.kind) || '';
     try {
-      await B.call(c.at, 'POST', { answer: c.text });
+      if (kind && kind !== 'reflection') {
+        await B.call(c.at, 'POST', workbookBody(kind, { text: c.text }));
+      } else {
+        await B.call(c.at, 'POST', { answer: c.text });
+      }
     } catch (err) {
       var e = document.createElement('div');
       e.className = 'sys';
