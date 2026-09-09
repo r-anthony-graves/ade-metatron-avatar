@@ -251,3 +251,71 @@ test('the workbook is styled', () => {
   assert.match(HTML, /\.wb-field/);
   assert.match(HTML, /#jtab/);
 });
+
+test('the live kind owns the dot and is auto-selected', () => {
+  /* Opening the journal greets the owed thing: the invitation's kind gets a
+     live dot and, when no panel was chosen yet, becomes the active kind.
+     Falsified by removing the `activeKind = live` auto-select line or by
+     never toggling the `.live` class. */
+  /* Read from the RAW source, not from `codeOnly`: the toggle's `'live'`
+     literal has no 'n', so codeOnly strips it to `toggle('', ...)` -- same
+     trap as the 'n'-less route guards and the FRAMING guard. */
+  const pj = JS.slice(JS.indexOf('function paintJournal'),
+                      JS.indexOf('function journalEntry'));
+  assert.match(pj, /classList\.toggle\('live'/);
+  assert.match(pj, /standingPrompt\.kind/);
+  assert.match(pj, /activeKind = live/);
+});
+
+test('panels dispatch per kind', () => {
+  /* One panel per kind, one Entries default -- a kind with no case is a
+     panel that never renders. Guarded on the RAW JS: codeOnly eats
+     `case 'puzzle'` (same trap as the FRAMING guard). Falsified by removing
+     one case arm. */
+  const dispatch = JS.slice(JS.indexOf('function journalPanel'),
+                            JS.indexOf('function questHistoryPanel'));
+  const arms = (dispatch.match(/case '(?:quest|reflection|pattern|puzzle)':/g) || []);
+  assert.deepEqual(arms, [
+    "case 'quest':",
+    "case 'reflection':",
+    "case 'pattern':",
+    "case 'puzzle':"
+  ]);
+  assert.match(dispatch, /paintEntries\(entries\)/);
+});
+
+test('each kind panel reads its own history route', () => {
+  /* History comes from the kind's own read endpoint, never a shared fetch
+     that a new kind could silently join. Guarded on the RAW JS: codeOnly
+     strips the n-less route literals ('/v1/codex/quests'/reflect/puzzles)
+     to '' -- same trap as the FRAMING and detailRouteFor guards, which
+     are the precedent for reading JS here. Falsified by removing one
+     route string from the panel block. */
+  const panels = JS.slice(JS.indexOf('function questHistoryPanel'),
+                          JS.indexOf('function paintEntries'));
+  assert.match(panels, /\/v1\/codex\/quests/);
+  assert.match(panels, /\/v1\/codex\/reflect/);
+  assert.match(panels, /\/v1\/codex\/patterns/);
+  assert.match(panels, /\/v1\/codex\/puzzles/);
+});
+
+test('the quest board rates depth by clue COUNT, never a clue body', () => {
+  /* Serving a clue's text is what reveals it (quests.py), so the board's
+     unrevealed figure must come from `clues_unrevealed`, never by walking
+     the revealed list. Falsified by replacing the field with
+     `(n.clues || []).length`. */
+  const board = CODE.slice(CODE.indexOf('function questHistoryPanel'),
+                           CODE.indexOf('function reflectionHistoryPanel'));
+  assert.match(board, /clues_unrevealed/);
+  assert.doesNotMatch(board, /\.clues\.\w+\.text/);
+});
+
+test('a recorded workbook flips to the done card', () => {
+  /* The mockup's dimmed confirmation replaces the card in place -- Ade
+     confirms, and the refetch on the next switch re-settles everything
+     else. Falsified by removing the done-flip. */
+  const wb = CODE.slice(CODE.indexOf('function sendWorkbook'),
+                        CODE.indexOf('function journalEntry'));
+  assert.match(wb, /classList\.add\('done'\)/);
+  assert.match(wb, /never a verdict/);
+});

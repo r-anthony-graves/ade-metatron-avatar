@@ -32,6 +32,7 @@
      text, and asking again at submit time could hand the answer to a
      different question if a pass ran in between. */
   var standingPrompt = null;
+  var activeKind = 'entries';
   function allTabs() { return TABS.concat(READ_TABS); }
   function isRead(tab) { return READ_TABS.indexOf(tab) >= 0; }
   var activeTab = 'chat';
@@ -220,27 +221,18 @@
     });
   }
   function paintJournal(entries) {
-    threadEl.innerHTML = '';
-    if (standingPrompt && standingPrompt.text) {
-      threadEl.appendChild(promptCard(journalDayKey(entries)));
+    var jtabEl = document.getElementById('jtab');
+    if (jtabEl) jtabEl.hidden = false;
+    var live = standingPrompt && standingPrompt.kind;
+    var bar = document.querySelectorAll('#jtab .jtab');
+    for (var i = 0; i < bar.length; i++) {
+      var k = bar[i].getAttribute('data-jtab');
+      bar[i].classList.toggle('live', k === live);
     }
-    if (!entries.length) {
-      var none = document.createElement('div');
-      none.className = 'sys';
-      none.textContent = 'No entries yet. The rhythms write one per day, '
-                       + 'week and month.';
-      threadEl.appendChild(none);
-      return;
-    }
-    /* Newest last, so it reads like the thread beside it and the latest
-       entry is where the scroll lands. */
-    entries = entries.slice().sort(function (a, b) {
-      return String(a.period_key || '') < String(b.period_key || '') ? -1 : 1;
-    });
-    for (var i = 0; i < entries.length; i++) {
-      threadEl.appendChild(journalEntry(entries[i]));
-    }
-    threadEl.scrollTop = threadEl.scrollHeight;
+    /* Auto-select the owed thing only until Ray chooses a panel himself. */
+    if (activeKind === 'entries' && live) activeKind = live;
+    journalTabMark(activeKind);
+    journalPanel(entries, journalDayKey(entries));
   }
   /* Sometimes the Codex asks; sometimes the Codex notices, distinguishes or
      sets a riddle. One card, rendered by the invitation's KIND, because the
@@ -303,11 +295,18 @@
     var wrap = document.createElement('div');
     wrap.className = 'msg ade approval workbook';
     var kind = standingPrompt.kind || '';
+    function label(text) {
+      var el = document.createElement('div');
+      el.className = 'wb-labels';
+      el.textContent = text;
+      return el;
+    }
     var frame = document.createElement('div');
-    frame.className = 'meta';
+    frame.className = 'meta wb-framing';
     frame.textContent = frameFor(kind);
     wrap.appendChild(frame);
     var q = document.createElement('div');
+    q.className = 'wb-question';
     q.textContent = standingPrompt.text;
     wrap.appendChild(q);
     /* The quest carries a central question the node is a step toward; the
@@ -325,7 +324,7 @@
       }).catch(function () { central.textContent = ''; });
     }
     var dateLine = document.createElement('div');
-    dateLine.className = 'meta';
+    dateLine.className = 'meta wb-date';
     dateLine.textContent = '── ' + (dayKey || '') + ' ──';
     wrap.appendChild(dateLine);
     /* The main field: a freeform textarea for every kind but pattern, which
@@ -333,33 +332,38 @@
        freeform). */
     var textId = kind === 'pattern' ? 'wb-rejected' : 'wb-main';
     var textEl = document.createElement('textarea');
-    textEl.className = 'wb ' + textId;
+    textEl.className = 'wb wb-field ' + textId;
     textEl.placeholder = kind === 'pattern'
       ? 'why the boring explanation does not fit…'
       : 'your answer to the question…';
+    wrap.appendChild(label(kind === 'pattern' ? 'why it does not fit' : 'your answer'));
     wrap.appendChild(textEl);
     if (kind === 'quest') {
       var noticed = document.createElement('input');
-      noticed.className = 'wb wb-noticed';
+      noticed.className = 'wb wb-field wb-noticed';
       noticed.type = 'text';
       noticed.placeholder = 'what I noticed…';
+      wrap.appendChild(label('what I noticed'));
       wrap.appendChild(noticed);
       var deepen = document.createElement('input');
-      deepen.className = 'wb wb-deepen';
+      deepen.className = 'wb wb-field wb-deepen';
       deepen.type = 'text';
       deepen.placeholder = 'a better question, if one surfaced…';
+      wrap.appendChild(label('a better question, if one surfaced'));
       wrap.appendChild(deepen);
     } else if (kind === 'reflection') {
       var noted = document.createElement('input');
-      noted.className = 'wb wb-noticed';
+      noted.className = 'wb wb-field wb-noticed';
       noted.type = 'text';
       noted.placeholder = 'what I noticed…';
+      wrap.appendChild(label('what I noticed'));
       wrap.appendChild(noted);
     } else if (kind === 'pattern') {
       var nh = document.createElement('input');
-      nh.className = 'wb wb-null';
+      nh.className = 'wb wb-field wb-null';
       nh.type = 'text';
       nh.placeholder = 'the boring explanation (the null hypothesis)…';
+      wrap.appendChild(label('the boring explanation (the null hypothesis)'));
       wrap.appendChild(nh);
       var decisionRow = document.createElement('div');
       decisionRow.className = 'wb-decide';
@@ -378,6 +382,7 @@
           });
           decisionRow.appendChild(btn);
         });
+      wrap.appendChild(label('decision \u2014 pattern, or coincidence?'));
       wrap.appendChild(decisionRow);
     }
     var actions = document.createElement('div');
@@ -487,7 +492,20 @@
     var at = standingPrompt.answer_at || standingPrompt.attempt_at;
     B.call(at || '', 'POST', body).then(function () {
       speakText('enterred below the surface.');
-      renderJournal();
+      wrap.innerHTML = '';
+      wrap.classList.add('done');
+      var f = document.createElement('div');
+      f.className = 'wb-framing';
+      f.textContent = 'enterred below the surface.';
+      wrap.appendChild(f);
+      var q = document.createElement('div');
+      q.className = 'wb-question';
+      q.textContent = standingPrompt ? standingPrompt.text : '';
+      wrap.appendChild(q);
+      var d = document.createElement('div');
+      d.className = 'wb-date';
+      d.textContent = 'recorded as one attempt, never a verdict';
+      wrap.appendChild(d);
     }).catch(function (err) {
       var e = document.createElement('div');
       e.className = 'sys';
@@ -508,6 +526,257 @@
     body.textContent = String(entry.body || '');
     wrap.appendChild(body);
     return wrap;
+  }
+
+  function journalPanel(entries, dayKey) {
+    threadEl.innerHTML = '';
+    switch (activeKind) {
+      case 'quest': questHistoryPanel(dayKey); break;
+      case 'reflection': reflectionHistoryPanel(dayKey); break;
+      case 'pattern': patternHistoryPanel(dayKey); break;
+      case 'puzzle': puzzleHistoryPanel(dayKey); break;
+      default: paintEntries(entries);
+    }
+  }
+  function questHistoryPanel(dayKey) {
+    if (standingPrompt && standingPrompt.kind === 'quest') {
+      threadEl.appendChild(promptCard(dayKey));
+    }
+    B.call('/v1/codex/quests', 'GET', null).then(function (r) {
+      var list = (r && r.data && r.data.quests) || [];
+      var active = null;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].state === 'ACTIVE') { active = list[i]; break; }
+      }
+      var head = document.createElement('div');
+      head.className = 'sys';
+      head.textContent = active
+        ? 'the quest board: ' + (active.title || active.slug)
+        : 'no quest is active right now.';
+      threadEl.appendChild(head);
+      if (!active) return;
+      B.call('/v1/codex/quests/' + (active.slug || ''), 'GET', null).then(
+        function (b) {
+          var board = (b && b.data && b.data.quest) || {};
+          var nodes = board.nodes || [];
+          for (var j = 0; j < nodes.length; j++) {
+            var n = nodes[j];
+            var row = document.createElement('div');
+            row.className = 'msg ade';
+            var bubble = document.createElement('div');
+            bubble.className = 'bubble';
+            var title = document.createElement('div');
+            title.textContent = (n.ordinal || '') + '. ' + n.title
+                              + ' \u2014 ' + n.state;
+            bubble.appendChild(title);
+            var body = document.createElement('div');
+            body.textContent = String(n.body || '');
+            bubble.appendChild(body);
+            var clues = document.createElement('div');
+            clues.className = 'meta';
+            clues.textContent = n.clues_unrevealed
+              ? n.clues_unrevealed + ' clue(s) unrevealed in this descent.'
+              : 'no clues rest here.';
+            bubble.appendChild(clues);
+            row.appendChild(bubble);
+            threadEl.appendChild(row);
+          }
+          if (board.locked_ahead) {
+            var wait = document.createElement('div');
+            wait.className = 'sys';
+            wait.textContent = board.locked_ahead + ' descent(s) wait below.';
+            threadEl.appendChild(wait);
+          }
+        }).catch(function () {
+          var e = document.createElement('div');
+          e.className = 'sys';
+          e.textContent = 'The quest board would not open.';
+          threadEl.appendChild(e);
+        });
+    }).catch(function () {
+      var e = document.createElement('div');
+      e.className = 'sys';
+      e.textContent = 'The quest shelf would not open.';
+      threadEl.appendChild(e);
+    });
+  }
+  function reflectionHistoryPanel(dayKey) {
+    if (standingPrompt && standingPrompt.kind === 'reflection') {
+      threadEl.appendChild(promptCard(dayKey));
+    }
+    B.call('/v1/codex/reflect', 'GET', null).then(function (r) {
+      var rows = (r && r.data && r.data.reflections) || [];
+      if (!rows.length) {
+        var none = document.createElement('div');
+        none.className = 'sys';
+        none.textContent = 'no reflections yet \u2014 the Codex speaks when it notices something.';
+        threadEl.appendChild(none);
+        return;
+      }
+      for (var i = 0; i < rows.length; i++) {
+        var rf = rows[i];
+        var e = document.createElement('div');
+        e.className = 'msg ade';
+        var b = document.createElement('div');
+        b.className = 'bubble';
+        var head = document.createElement('div');
+        head.className = 'meta';
+        head.textContent = 'reflection #' + rf.id + ' \u00b7 ' + rf.state
+          + (rf.stop_reason ? ' \u00b7 ' + rf.stop_reason : '');
+        b.appendChild(head);
+        var subject = document.createElement('div');
+        subject.textContent = rf.subject;
+        b.appendChild(subject);
+        var turns = rf.turns || [];
+        for (var j = 0; j < turns.length; j++) {
+          var t = document.createElement('div');
+          t.className = 'meta';
+          t.textContent = 'q' + turns[j].ordinal + ': ' + turns[j].question
+            + (turns[j].answer ? ' \u2014 ' + turns[j].answer : '');
+          b.appendChild(t);
+        }
+        e.appendChild(b);
+        threadEl.appendChild(e);
+      }
+    }).catch(function () {
+      var e = document.createElement('div');
+      e.className = 'sys';
+      e.textContent = 'The reflection list would not open.';
+      threadEl.appendChild(e);
+    });
+  }
+  function patternHistoryPanel(dayKey) {
+    if (standingPrompt && standingPrompt.kind === 'pattern') {
+      threadEl.appendChild(promptCard(dayKey));
+    }
+    B.call('/v1/codex/patterns', 'GET', null).then(function (r) {
+      var rows = (r && r.data && r.data.patterns) || [];
+      var standing = (r && r.data && r.data.standing) || {};
+      if (!rows.length) {
+        var none = document.createElement('div');
+        none.className = 'sys';
+        none.textContent = 'no pattern records yet.';
+        threadEl.appendChild(none);
+        return;
+      }
+      if (standing.total) {
+        var head = document.createElement('div');
+        head.className = 'sys';
+        head.textContent = standing.total + ' record(s): '
+          + (standing.by_state.CONFIRMED || 0) + ' confirmed, '
+          + (standing.by_state.COINCIDENCE || 0) + ' coincidence.';
+        threadEl.appendChild(head);
+      }
+      for (var i = 0; i < rows.length; i++) {
+        var p = rows[i];
+        var e = document.createElement('div');
+        e.className = 'msg ade';
+        var b = document.createElement('div');
+        b.className = 'bubble';
+        var head2 = document.createElement('div');
+        head2.className = 'meta';
+        head2.textContent = p.state + ' \u00b7 seen ' + p.occurrences
+          + ' time(s) \u00b7 ' + p.domain;
+        b.appendChild(head2);
+        var st = document.createElement('div');
+        st.textContent = p.statement;
+        b.appendChild(st);
+        if (p.null_hypothesis) {
+          var nh = document.createElement('div');
+          nh.className = 'meta';
+          nh.textContent = 'null: ' + p.null_hypothesis;
+          b.appendChild(nh);
+        }
+        if (p.null_rejected_because) {
+          var rb = document.createElement('div');
+          rb.className = 'meta';
+          rb.textContent = 'rejected: ' + p.null_rejected_because;
+          b.appendChild(rb);
+        }
+        e.appendChild(b);
+        threadEl.appendChild(e);
+      }
+    }).catch(function () {
+      var e = document.createElement('div');
+      e.className = 'sys';
+      e.textContent = 'The pattern list would not open.';
+      threadEl.appendChild(e);
+    });
+  }
+  function puzzleHistoryPanel(dayKey) {
+    if (standingPrompt && standingPrompt.kind === 'puzzle') {
+      threadEl.appendChild(promptCard(dayKey));
+    }
+    B.call('/v1/codex/puzzles', 'GET', null).then(function (r) {
+      var rows = (r && r.data && r.data.puzzles) || [];
+      var standing = (r && r.data && r.data.standing) || {};
+      if (!rows.length) {
+        var none = document.createElement('div');
+        none.className = 'sys';
+        none.textContent = 'no puzzles yet.';
+        threadEl.appendChild(none);
+        return;
+      }
+      if (standing.attempts_before_hint) {
+        var head = document.createElement('div');
+        head.className = 'sys';
+        head.textContent = standing.attempts_before_hint
+          + ' attempts before a hint costs.';
+        threadEl.appendChild(head);
+      }
+      for (var i = 0; i < rows.length; i++) {
+        var pu = rows[i];
+        var e = document.createElement('div');
+        e.className = 'msg ade';
+        var b = document.createElement('div');
+        b.className = 'bubble';
+        var head2 = document.createElement('div');
+        head2.className = 'meta';
+        head2.textContent = pu.state + ' \u00b7 ' + (pu.puzzle_class || pu.class)
+          + ' \u00b7 ' + (pu.attempts || 0) + ' attempt(s)';
+        b.appendChild(head2);
+        var st = document.createElement('div');
+        st.textContent = pu.title || pu.prompt || '';
+        b.appendChild(st);
+        if (pu.state === 'HINTED' && pu.hint) {
+          var hint = document.createElement('div');
+          hint.className = 'meta';
+          hint.textContent = 'hint: ' + pu.hint;
+          b.appendChild(hint);
+        }
+        if (pu.state === 'SOLVED' && pu.solution) {
+          var sol = document.createElement('div');
+          sol.className = 'meta';
+          sol.textContent = 'solution: ' + pu.solution;
+          b.appendChild(sol);
+        }
+        e.appendChild(b);
+        threadEl.appendChild(e);
+      }
+    }).catch(function () {
+      var e = document.createElement('div');
+      e.className = 'sys';
+      e.textContent = 'The puzzle list would not open.';
+      threadEl.appendChild(e);
+    });
+  }
+  function paintEntries(entries) {
+    threadEl.innerHTML = '';
+    if (!entries.length) {
+      var none = document.createElement('div');
+      none.className = 'sys';
+      none.textContent = 'No entries yet. The rhythms write one per day, '
+                       + 'week and month.';
+      threadEl.appendChild(none);
+      return;
+    }
+    entries = entries.slice().sort(function (a, b) {
+      return String(a.period_key || '') < String(b.period_key || '') ? -1 : 1;
+    });
+    for (var i = 0; i < entries.length; i++) {
+      threadEl.appendChild(journalEntry(entries[i]));
+    }
+    threadEl.scrollTop = threadEl.scrollHeight;
   }
 
   function renderThread() {
@@ -594,6 +863,8 @@
   function setTab(tab) {
     if (allTabs().indexOf(tab) < 0) tab = 'chat';
     activeTab = tab;
+    var jtabEl = document.getElementById('jtab');
+    if (jtabEl) jtabEl.hidden = (tab !== 'journal');
     var tabs = document.querySelectorAll('#tabs .tab');
     for (var i = 0; i < tabs.length; i++) {
       tabs[i].classList.toggle('on', tabs[i].getAttribute('data-tab') === tab);
@@ -621,6 +892,26 @@
     }
   }
   window.__setTab = setTab;
+  function journalTabMark(kind) {
+    var bar = document.querySelectorAll('#jtab .jtab');
+    for (var i = 0; i < bar.length; i++) {
+      bar[i].classList.toggle('on', bar[i].getAttribute('data-jtab') === kind);
+    }
+  }
+  function setJournalTab(kind) {
+    activeKind = kind;
+    journalTabMark(kind);
+    renderJournal();
+  }
+  function initJournalTabs() {
+    var bar = document.querySelectorAll('#jtab .jtab');
+    for (var i = 0; i < bar.length; i++) {
+      bar[i].addEventListener('click', function () {
+        setJournalTab(this.getAttribute('data-jtab'));
+      });
+    }
+  }
+  initJournalTabs();
   window.__activeTab = function () { return activeTab; };
 
   function focusInput() { setTimeout(function () { input.focus(); input.select(); }, 30); }
