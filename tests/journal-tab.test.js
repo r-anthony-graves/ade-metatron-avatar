@@ -231,3 +231,23 @@ test('Ade speaks in the workbook', () => {
   assert.match(workbook, /speakText\(/);
   assert.match(workbook, /enterred below the surface\./);
 });
+
+test('the journal subtab bar has every kind', () => {
+  /* Each workbook kind owns a subtab, and Entries keeps the journal. A kind
+     with no button is a panel with no entrance. Falsified by dropping one
+     data-jtab button from the markup. */
+  for (const kind of ['quest', 'reflection', 'pattern', 'puzzle', 'entries']) {
+    assert.match(HTML, new RegExp('data-jtab="' + kind + '"'));
+  }
+  assert.match(HTML, /id="jtab"/);
+});
+
+test('the workbook is styled', () => {
+  /* Tasks 6-7 shipped the card with no CSS; the live card rendered as bare
+     textareas and buttons. This pins the stylesheet the card and its panels
+     are drawn with. Falsified by deleting the workbook CSS block. */
+  assert.match(HTML, /\.workbook\s*\{/);
+  assert.match(HTML, /\.wb-framing/);
+  assert.match(HTML, /\.wb-field/);
+  assert.match(HTML, /#jtab/);
+});
