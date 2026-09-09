@@ -149,8 +149,8 @@ test('a failed answer says so instead of looking accepted', () => {
 });
 
 /* ----------------------------------------------------------------------- */
-/* The workbook card (Plan Task 7). Each guard matches the existing
-   source-guard style: read the CODE, check the load-bearing construct. */
+/* The workbook card. Each guard matches the existing source-guard style:
+   read the CODE, check the load-bearing construct. */
 /* ----------------------------------------------------------------------- */
 
 test('the workbook speaks per kind (FRAMING has all four)', () => {
@@ -243,9 +243,9 @@ test('the journal subtab bar has every kind', () => {
 });
 
 test('the workbook is styled', () => {
-  /* Tasks 6-7 shipped the card with no CSS; the live card rendered as bare
-     textareas and buttons. This pins the stylesheet the card and its panels
-     are drawn with. Falsified by deleting the workbook CSS block. */
+  /* The card shipped once with no CSS at all, and the live version rendered
+     as bare textareas and buttons. This pins the stylesheet the card and its
+     panels are drawn with. Falsified by deleting the workbook CSS block. */
   assert.match(HTML, /\.workbook\s*\{/);
   assert.match(HTML, /\.wb-framing/);
   assert.match(HTML, /\.wb-field/);
@@ -434,4 +434,18 @@ test('the thought stands above EVERY subtab, not inside one', () => {
 test('the thought surface is styled', () => {
   assert.match(HTML, /\.thought\s*\{/);
   assert.match(HTML, /\.thought\s+\.tq\s*\{/);
+});
+
+test('the pattern page survives a standing block with no by_state', () => {
+  /* Every other history panel guards its fetched reads with `||`; this one
+     dereferenced `standing.by_state` bare. The endpoint supplies the key
+     today, so this is hardening rather than a live bug -- but a shape change
+     would throw INSIDE the .then, and a throw there does not render an error,
+     it renders NOTHING. The Pattern page would go blank with no way to tell
+     why, which is the worst of the available failures.
+
+     Falsified by restoring the bare dereference. */
+  assert.doesNotMatch(JS, /standing\.by_state\./,
+    'by_state is dereferenced without a fallback');
+  assert.match(JS, /\(standing\.by_state \|\| \{\}\)/);
 });

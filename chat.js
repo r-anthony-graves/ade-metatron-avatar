@@ -740,8 +740,8 @@
         var head = document.createElement('div');
         head.className = 'sys';
         head.textContent = standing.total + ' record(s): '
-          + (standing.by_state.CONFIRMED || 0) + ' confirmed, '
-          + (standing.by_state.COINCIDENCE || 0) + ' coincidence.';
+          + ((standing.by_state || {}).CONFIRMED || 0) + ' confirmed, '
+          + ((standing.by_state || {}).COINCIDENCE || 0) + ' coincidence.';
         threadEl.appendChild(head);
       }
       for (var i = 0; i < rows.length; i++) {
