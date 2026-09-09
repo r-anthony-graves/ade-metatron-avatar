@@ -120,13 +120,16 @@ function moodPalette() {
 function pullMood() {
   if (window.ADE_MOOD && window.ADE_MOOD.frame) {
     var f = window.ADE_MOOD.frame(performance.now());
+    /* mode is the renderer's baseline authority even while idle -- the same
+       frame that decides "no mood" must also decide which baseline to draw. */
+    MOOD.mode = (f && f.mode) || 'auto';
     if (!f || !MOODS[f.mood]) { MOOD.mood = null; MOOD.burst = 0; MOOD.tint = null; }
     else {
-      MOOD.mood = f.mood; MOOD.mode = f.mode || 'auto';
+      MOOD.mood = f.mood;
       MOOD.burst = clamp(f.burst || 0, 0, 1);
       MOOD.tint = f.tint || null; MOOD.flick = MOOD.tint ? (MOOD.tint.f ? 1 : 0) : 0;
     }
-  } else { MOOD.mood = null; MOOD.burst = 0; MOOD.tint = null; }
+  } else { MOOD.mood = null; MOOD.mode = 'auto'; MOOD.burst = 0; MOOD.tint = null; }
   moodPalette();
 }
 
