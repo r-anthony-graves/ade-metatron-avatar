@@ -41,3 +41,39 @@ test('main relays glyph:tint to the glyph window only', () => {
   const body = MAIN.slice(i, i + 240);
   assert.match(body, /webContents\.send\('ui:glyphTint'/);
 });
+
+const CHAT = read('chat.js');
+
+test('a decided approval raises a satisfied event', () => {
+  const i = CHAT.indexOf('async function decide(m, allow)');
+  assert.ok(i >= 0, 'decide() must still exist');
+  const body = CHAT.slice(i, i + 900);
+  assert.match(body, /glyphEvent\('approved'\)/,
+    'deciding an approval must tell the glyph to be satisfied');
+});
+
+test('a failed ask raises a troubled event', () => {
+  const i = CHAT.indexOf('Call failed: ');
+  assert.ok(i >= 0, 'the ask failure bubble must still exist');
+  const body = CHAT.slice(i, i + 300);
+  assert.match(body, /glyphEvent\('failed'\)/,
+    'a failed ask must tell the glyph to be troubled');
+});
+
+test('spoken replies carry their sentiment to the glyph', () => {
+  const i = CHAT.indexOf('function speakText(text) {');
+  assert.ok(i >= 0);
+  const body = CHAT.slice(i, i + 520);
+  assert.match(body, /ADE_MOOD\.sentiment\(text\)/,
+    'speakText must score the reply before asking to speak');
+  assert.match(body, /glyphTint\(\{[\s\S]*score[\s\S]*ms\s*:\s*4000\s*\}\)/,
+    'the sentiment must cross the bridge with a speech-window duration');
+});
+
+test('a failed voice action reads raise a troubled event', () => {
+  const i = CHAT.indexOf('async function runVoice(phrase, engine)');
+  assert.ok(i >= 0);
+  const body = CHAT.slice(i, i + 1000);
+  assert.match(body, /glyphEvent\('failed'\)/,
+    'a failed voice action read must tell the glyph to be troubled');
+});

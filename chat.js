@@ -660,6 +660,13 @@
   function speakText(text) {
     if (!B || !text) return;
     if (B.speakGlyph) B.speakGlyph(text);
+    /* The mood core lives in this window too (chat.html loads mood.js). Before
+       the glyph window plays the reply, hand it the sentiment so the tint can
+       ride the speech window. Sentiment is O(text), runs here, never blocks. */
+    if (B.glyphTint && window.ADE_MOOD) {
+      var r = window.ADE_MOOD.sentiment(text);
+      B.glyphTint({ score: r.score, hot: r.hot, ms: 4000 });
+    }
   }
   function stopSpeaking() { if (B && B.speakGlyphStop) B.speakGlyphStop(); }
   window.__stopSpeaking = stopSpeaking;
@@ -1008,6 +1015,7 @@
       input.value = userText;
       paintTabLabel();
       focusInput();
+      if (B.glyphEvent) B.glyphEvent('failed');
       return;
     }
 
@@ -1156,7 +1164,7 @@
     if (act.read) r = await B.call(act.read, 'GET', null);
     else r = await dispatchTask(
       { description: act.task, task_type: act.type || 'coding', topic: 'u/local/avatar' });
-    if (!r || !r.ok) { push('chat', 'ade', 'error', (r && (r.error || 'HTTP ' + r.status)) || 'no reply'); return; }
+    if (!r || !r.ok) { push('chat', 'ade', 'error', (r && (r.error || 'HTTP ' + r.status)) || 'no reply'); if (B.glyphEvent) B.glyphEvent('failed'); return; }
     var text = readReply(r.data);
     push('chat', 'ade', 'text', text || '(no output)');
     if (text && await B.speakEnabled()) speakText(text);
@@ -1460,6 +1468,7 @@
     push('chat', 'ade', r && r.ok ? 'text' : 'error',
       r && r.ok ? (allow ? 'Allowed ' + id : 'Denied ' + id)
                 : 'Could not decide ' + id + ': ' + ((r && (r.error || r.status)) || '?'));
+    if (r && r.ok && B.glyphEvent) B.glyphEvent('approved');
   }
   window.__decide = decide;
 
