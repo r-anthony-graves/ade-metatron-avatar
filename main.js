@@ -601,6 +601,12 @@ ipcMain.on('chat:speak', (_e, text) => {
 ipcMain.on('chat:hush', () => {
   if (win && !win.isDestroyed()) win.webContents.send('ui:hush');
 });
+ipcMain.on('glyph:event', (_e, type) => {
+  if (win && !win.isDestroyed()) win.webContents.send('ui:glyphEvent', String(type || ''));
+});
+ipcMain.on('glyph:tint', (_e, payload) => {
+  if (win && !win.isDestroyed()) win.webContents.send('ui:glyphTint', payload);
+});
 ipcMain.on('chat:open', (_e, tab) => openChat(tab));
 ipcMain.on('chat:hide', () => {
   flushThreads();

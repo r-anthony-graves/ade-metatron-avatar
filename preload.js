@@ -58,6 +58,12 @@ contextBridge.exposeInMainWorld('adeBridge', {
   onPttDown: (fn) => ipcRenderer.on('ui:pttDown', () => fn()),
   onPttUp: (fn) => ipcRenderer.on('ui:pttUp', () => fn()),
 
+  /* ---- mood: one-shot events (approved/failed/wake) + reply sentiment ---- */
+  glyphEvent: (type) => ipcRenderer.send('glyph:event', String(type || '')),
+  glyphTint: (payload) => ipcRenderer.send('glyph:tint', payload),
+  onGlyphEvent: (fn) => ipcRenderer.on('ui:glyphEvent', (_e, t) => fn(t)),
+  onGlyphTint: (fn) => ipcRenderer.on('ui:glyphTint', (_e, payload) => fn(payload)),
+
   shortcuts: () => ipcRenderer.invoke('app:shortcuts'),
   hit: (on) => ipcRenderer.send('win:hit', !!on),
   dragStart: () => ipcRenderer.invoke('win:dragStart'),
