@@ -60,6 +60,18 @@ test('the journal is fetched fresh, never cached into threads', () => {
   assert.doesNotMatch(render, /threads\[/);
 });
 
+test('journal and invitation are read through the .data envelope', () => {
+  /* `adeBridge.call` resolves to { ok, status, data } -- every sibling site
+     unwraps `.data` (r.data.types, r.data.codex). renderJournal once read
+     `r.entries` and `inv.invitation` directly, which are always undefined:
+     the entries and the standing invitation both rendered empty even though
+     the server answered. Falsified by reverting to the raw fields. */
+  const render = CODE.slice(CODE.indexOf('function renderJournal'),
+                            CODE.indexOf('function paintJournal'));
+  assert.match(render, /r\.data\.entries/);
+  assert.match(render, /inv\.data\.invitation/);
+});
+
 test('a degraded entry is rendered, not hidden', () => {
   /* adeos/codex/journal.py's own rule: an empty day and an unreachable engine
      must never read the same. This view would break it by showing prose
@@ -97,6 +109,17 @@ test('the answer goes to the reflection that ASKED', () => {
   assert.doesNotMatch(handler, /\/v1\/codex\/reflect\//);
 });
 
+test('the answer is sent under the key the endpoint reads', () => {
+  /* adeos/codex/api.py reads body.get("answer", ""); the tab once POSTed
+     { text: c.text }, so the server received an empty answer and the ladder
+     treated every reply as a deflection. The /reflect slash command sends
+     { answer: body } -- this path must agree. Falsified by renaming the key
+     back to `text` (or sending the reply under any other name). */
+  const handler = CODE.slice(CODE.indexOf('async function handleJournalAnswer'),
+                             CODE.indexOf('var busy = false'));
+  assert.match(handler, /B\.call\(c\.at,[\s\S]{0,60}answer:/);
+});
+
 test('the composer only answers when there is something to answer', () => {
   /* Otherwise the text vanishes into a view with no target. Falsified by
      routing every journal-tab message to the answer path. */
@@ -123,4 +146,88 @@ test('a failed answer says so instead of looking accepted', () => {
                              CODE.indexOf('var busy = false'));
   assert.match(handler, /catch/);
   assert.match(handler, /not recorded/);
+});
+
+/* ----------------------------------------------------------------------- */
+/* The workbook card (Plan Task 7). Each guard matches the existing
+   source-guard style: read the CODE, check the load-bearing construct. */
+/* ----------------------------------------------------------------------- */
+
+test('the workbook speaks per kind (FRAMING has all four)', () => {
+  /* One card, rendered by the invitation's kind, and each kind gets Ade's
+     own framing line -- not a generic "The Codex is asking". Guarded on the
+     raw JS: codeOnly's quote-stripper eats a key that sits between two
+     surviving strings (puzzle:), so a stripped guard would be checking a
+     corpse. Falsified by dropping a key from FRAMING. */
+  const framing = JS.slice(JS.indexOf('var FRAMING'),
+                           JS.indexOf('function frameFor'));
+  assert.match(framing, /quest:/);
+  assert.match(framing, /reflection:/);
+  assert.match(framing, /pattern:/);
+  assert.match(framing, /puzzle:/);
+});
+
+test('unfold pulls the kind\'s own detail route', () => {
+  /* The workbook reveals *why* from each kind's detail endpoint, never from
+     a hardcoded summary. Guarded on the raw JS: codeOnly makes every case
+     arm collapse (quest's arm) or survive (reflection's, which holds an n),
+     and eats `case 'puzzle'` outright -- a stripped guard would pass an
+     empty field. Falsified by removing one route. */
+  const route = JS.slice(JS.indexOf('function detailRouteFor'),
+                         JS.indexOf('function promptCard'));
+  const arms = (route.match(/case '(?:quest|reflection|pattern|puzzle)':/g) || []);
+  assert.deepEqual(arms, [
+    "case 'quest':",
+    "case 'reflection':",
+    "case 'pattern':",
+    "case 'puzzle':"
+  ]);
+  assert.match(route, /standingPrompt\.slug/);
+  assert.match(route, /\/v1\/codex\/quests\//);
+  assert.match(route, /\/v1\/codex\/reflect\//);
+  assert.match(route, /\/v1\/codex\/patterns/);
+  assert.match(route, /\/v1\/codex\/puzzles\//);
+  assert.match(route, /default: return null/);
+});
+
+test('unrevealed quest clues are a count, never their text', () => {
+  /* quests.py burns a clue by serving it, so the workbook's quest unfold
+     must rate the depth by clues_unrevealed -- not by interpolating a clue's
+     body. Falsified by interpolating clue text. */
+  const unfold = CODE.slice(CODE.indexOf('function unfoldedProse'),
+                            CODE.indexOf('function sendWorkbook'));
+  assert.match(unfold, /clues_unrevealed/);
+  assert.doesNotMatch(unfold, /\.clues\b/);
+  assert.doesNotMatch(unfold, /\.clues\.\w+\.text/);
+});
+
+test('the workbook date comes from the journal, not the client clock', () => {
+  /* The journal tab's own rule: the server period_key is the date, because
+     the client clock drifts and the quest must not re-date itself. Falsified
+     by inserting new Date() into the workbook path. */
+  const workbook = CODE.slice(CODE.indexOf('function paintJournal'),
+                              CODE.indexOf('function journalEntry'));
+  assert.match(workbook, /period_key/);
+  assert.doesNotMatch(workbook, /new Date/);
+});
+
+test('the submit maps one payload per kind', () => {
+  /* quest -> { response, noticed, deepen }; reflection -> { answer };
+     pattern -> { decision, null_hypothesis, rejected_because };
+     puzzle -> { attempt }. Falsified by routing every kind to { answer }. */
+  const mapper = CODE.slice(CODE.indexOf('function workbookBody'),
+                            CODE.indexOf('function detailRouteFor'));
+  assert.match(mapper, /response:/);
+  assert.match(mapper, /answer:/);
+  assert.match(mapper, /decision:/);
+  assert.match(mapper, /attempt:/);
+});
+
+test('Ade speaks in the workbook', () => {
+  /* The framework line and the confirmation after a submit are Ade's own
+     voice, not boilerplate. Falsified by removing the confirmation call. */
+  const workbook = CODE.slice(CODE.indexOf('function sendWorkbook'),
+                              CODE.indexOf('function journalEntry'));
+  assert.match(workbook, /speakText\(/);
+  assert.match(workbook, /enterred below the surface\./);
 });
