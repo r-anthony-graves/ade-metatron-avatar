@@ -349,3 +349,89 @@ test('the journal command opens the tab and says nothing about trading', () => {
   assert.match(branch, /setTab\('journal'\)/);
   assert.doesNotMatch(branch, /trade/i);
 });
+
+/* --------------------------------------------------------------------------
+   The Thought for the Day, and the frontier. Ray, 2026-09-09.
+
+   The thought STANDS ALONE: read every morning whether or not a session
+   follows, so it is not a header on one panel -- it renders above whichever
+   subtab is open. The frontier beneath it is what a session targets, and it
+   is READ rather than chosen.
+   -------------------------------------------------------------------------- */
+
+test('the journal reads the thought and the position', () => {
+  /* Both routes are n-less or nearly so, and codeOnly strips string literals
+     lacking `n` -- '/v1/codex/thought' has no n at all and would vanish. Read
+     the RAW JS, like the FRAMING and detailRouteFor guards.
+
+     Falsified by dropping either fetch. */
+  assert.match(JS, /'\/v1\/codex\/thought'/);
+  assert.match(JS, /'\/v1\/codex\/ocean\/position'/);
+});
+
+test('the thought renders its passage and its question, question last', () => {
+  /* The question is the last thing read. A card that puts it above the
+     passage has un-asked it.
+
+     Falsified by appending the passage after the question. */
+  const at = JS.indexOf('function thoughtCard');
+  assert.ok(at > 0, 'no thoughtCard');
+  const end = JS.indexOf('\n  function ', at + 10);
+  const body = JS.slice(at, end > at ? end : at + 1400);
+  const passageAt = body.indexOf('passage');
+  const questionAt = body.indexOf('question');
+  assert.ok(passageAt > 0 && questionAt > 0, 'card renders neither half');
+  assert.ok(passageAt < questionAt,
+    'the question must be appended after the passage');
+});
+
+test('an UNWRITTEN thought says so rather than rendering blank', () => {
+  /* A missing thought and an unwritten one look identical to a reader unless
+     the card distinguishes them, and only one of them is a day the engine was
+     gone -- the rule adeos/codex/thought.py holds one layer down.
+
+     Falsified by rendering the passage regardless of `written`. */
+  const at = JS.indexOf('function thoughtCard');
+  const end = JS.indexOf('\n  function ', at + 10);
+  const body = JS.slice(at, end > at ? end : at + 1400);
+  /* The MECHANISM, not the word. `written` appears in prose and in comments;
+     what has to exist is the branch -- the question is appended only when the
+     day was actually written, and the passage is styled as the question when
+     it was not, because a reason is not a passage. A first falsification of
+     this guard checked only that the word occurred and stayed green when the
+     branch was deleted. */
+  assert.match(body, /t\.written\s*\?/, 'the card does not branch on written');
+  assert.match(body, /if\s*\(t\.written\)/, 'the question is not gated');
+});
+
+test('the frontier line names the position AND the frontier', () => {
+  /* "In harbour" hides that the next stratum is empty rather than merely
+     deeper. The frontier is the actionable half.
+
+     Falsified by rendering only the station. */
+  const at = JS.indexOf('function frontierLine');
+  assert.ok(at > 0, 'no frontierLine');
+  const end = JS.indexOf('\n  function ', at + 10);
+  const body = JS.slice(at, end > at ? end : at + 1200);
+  /* Read from the reading, not merely mentioned. Blanking the value left the
+     WORD in place and this guard green the first time it was falsified. */
+  assert.match(body, /p\.station/, 'the station is not read from the position');
+  assert.match(body, /p\.frontier/, 'the frontier is not read from the position');
+});
+
+test('the thought stands above EVERY subtab, not inside one', () => {
+  /* It is read whether or not a session follows, so it cannot live in a
+     single panel. journalPanel paints it before dispatching on the kind.
+
+     Falsified by moving either call inside a case of the switch. */
+  const at = JS.indexOf('function journalPanel');
+  assert.ok(at > 0, 'no journalPanel');
+  const body = JS.slice(at, JS.indexOf('switch (activeKind)', at));
+  assert.match(body, /thoughtCard/);
+  assert.match(body, /frontierLine/);
+});
+
+test('the thought surface is styled', () => {
+  assert.match(HTML, /\.thought\s*\{/);
+  assert.match(HTML, /\.thought\s+\.tq\s*\{/);
+});

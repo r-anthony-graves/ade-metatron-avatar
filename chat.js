@@ -32,6 +32,12 @@
      text, and asking again at submit time could hand the answer to a
      different question if a pass ran in between. */
   var standingPrompt = null;
+  /* Today's thought and today's reading. Fetched beside the journal and
+     allowed to fail on their own: a Journal that will not render because
+     the brain was down this morning is worse than one with no thought at
+     the top of it. */
+  var standingThought = null;
+  var standingPosition = null;
   var activeKind = 'entries';
   /* Only a real click on a subtab is a choice; an auto-select is not. The
      owed thing keeps greeting until Ray picks a panel himself. */
@@ -207,11 +213,21 @@
          with no prompt at the top of it. */
       B.call('/v1/codex/invitation', 'GET', null).catch(function () {
         return null;
+      }),
+      B.call('/v1/codex/thought', 'GET', null).catch(function () {
+        return null;
+      }),
+      B.call('/v1/codex/ocean/position', 'GET', null).catch(function () {
+        return null;
       })
     ]).then(function (both) {
       if (activeTab !== 'journal') return;      /* switched away mid-fetch */
       var r = both[0], inv = both[1];
       standingPrompt = (inv && inv.data && inv.data.invitation) || null;
+      standingThought = (both[2] && both[2].data
+                         && both[2].data.thought) || null;
+      standingPosition = (both[3] && both[3].data
+                          && both[3].data.position) || null;
       paintJournal((r && r.data && r.data.entries) || []);
     }).catch(function (err) {
       if (activeTab !== 'journal') return;
@@ -532,8 +548,65 @@
     return wrap;
   }
 
+  /* The Thought for the Day. A passage, and ONE question.
+
+     It STANDS ALONE -- read every morning whether or not a session follows --
+     so it is painted above whichever subtab is open rather than living inside
+     one of them.
+
+     `written: false` is a day the engine could not be reached, and it SAYS
+     so. A missing thought and an unwritten one look identical to a reader
+     otherwise, and only one of them is a day the brain was gone; that is
+     adeos/codex/thought.py's rule and this view would break it by rendering
+     prose either way.
+
+     The question is appended LAST and nothing follows it. A card that puts it
+     above the passage has un-asked it. */
+  function thoughtCard(t) {
+    var wrap = document.createElement('div');
+    wrap.className = 'thought';
+    var head = document.createElement('div');
+    head.className = 'tlabel';
+    head.textContent = 'thought for the day \u00b7 ' + String(t.period_key || '');
+    wrap.appendChild(head);
+    var passage = document.createElement('div');
+    passage.className = t.written ? 'tp' : 'tq';
+    passage.textContent = String(t.passage || '');
+    wrap.appendChild(passage);
+    if (t.written) {
+      var question = document.createElement('div');
+      question.className = 'tq';
+      question.textContent = String(t.question || '');
+      wrap.appendChild(question);
+    }
+    return wrap;
+  }
+
+  /* Where the Codex stands, and what is empty beneath it.
+
+     READ, never claimed: there is no way to set a position -- no field, no
+     verb, no route -- so this line can only ever report one. Naming the
+     station alone would hide that the next stratum is EMPTY rather than
+     merely deeper, and that emptiness is what a session targets. */
+  function frontierLine(p) {
+    var el = document.createElement('div');
+    el.className = 'sys';
+    var station = (p && p.station) ? String(p.station).toLowerCase()
+                                   : 'not yet in the water';
+    var frontier = (p && p.frontier) ? String(p.frontier).toLowerCase() : '';
+    el.textContent = frontier
+      ? station + ' \u2014 the ' + frontier + ' beneath is empty'
+      : station;
+    return el;
+  }
+
   function journalPanel(entries, dayKey) {
     threadEl.innerHTML = '';
+    /* Above the panel, on every subtab. The thought is not a header on
+       one page; it is the morning's surface, and the frontier beneath it
+       is what a session targets whichever panel is open. */
+    if (standingThought) threadEl.appendChild(thoughtCard(standingThought));
+    if (standingPosition) threadEl.appendChild(frontierLine(standingPosition));
     switch (activeKind) {
       case 'quest': questHistoryPanel(dayKey); break;
       case 'reflection': reflectionHistoryPanel(dayKey); break;
