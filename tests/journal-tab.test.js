@@ -689,3 +689,43 @@ test('an answered thought can still be answered again', () => {
   assert.match(body, /field\.hidden|revise/,
     'the revise control does not reveal the field');
 });
+
+/* --------------------------------------------------------------------------
+   Help > Quick start. Ray, 2026-09-09.
+   -------------------------------------------------------------------------- */
+
+test('the window menu carries Help > Quick start', () => {
+  /* The menu bar was Electron's DEFAULT -- buildMenu() is the tray's, not the
+     window's -- so a Help item needed an application menu. It keeps the
+     standard roles: replacing the default without them would silently remove
+     reload, zoom and the devtools toggle.
+
+     Falsified by removing the Help submenu or the setApplicationMenu call. */
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(MAIN, /setApplicationMenu/);
+  const at = MAIN.indexOf('function buildAppMenu');
+  assert.ok(at > 0, 'no application menu is built');
+  const body = MAIN.slice(at, MAIN.indexOf('\nfunction ', at + 10));
+  for (const role of ['fileMenu', 'editMenu', 'viewMenu', 'windowMenu']) {
+    assert.match(body, new RegExp("role: '" + role + "'"),
+      'the default ' + role + ' was dropped');
+  }
+  assert.match(body, /label: 'Quick start'/);
+});
+
+test('the quick start covers the rules a walker can get wrong', () => {
+  /* A guide that lists the panels and omits the seal is a guide to the parts
+     that cannot hurt you. The two irreversible things and the two that are
+     read rather than chosen have to be in it.
+
+     Falsified by dropping any of them. */
+  const QS = fs.readFileSync(path.join(__dirname, '..', 'quickstart.html'), 'utf8');
+  assert.match(QS, /seals/i, 'the seal is not mentioned');
+  assert.match(QS, /frontier/i, 'the frontier is not mentioned');
+  assert.match(QS, /one question/i, 'the one-question rule is not mentioned');
+  assert.match(QS, /graded|grades/i, 'it never says nothing is graded');
+  for (const section of ['Intent', 'Gateway', 'Vision', 'Analysis',
+                         'Integration', 'Review']) {
+    assert.match(QS, new RegExp(section));
+  }
+});

@@ -411,6 +411,49 @@ function createWindow() {
    not always-on-top -- the "desktop" the request asked for, distinct from the
    transparent click-through glyph. Created hidden; the glyph, the hotkey and
    the voice path open it. Closing it hides it: the orb keeps the app alive. */
+/* The WINDOW menu bar, as distinct from buildMenu() above, which is the
+   TRAY's. Until now the bar was Electron's default, so there was nowhere to
+   put a Help item.
+
+   The four standard roles are kept deliberately: setting an application menu
+   REPLACES the default outright, and a template without them would silently
+   remove reload, zoom, the devtools toggle and the window controls -- a menu
+   that looks the same and quietly does less. */
+function buildAppMenu() {
+  return Menu.buildFromTemplate([
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+    {
+      label: 'Help',
+      submenu: [
+        { label: 'Quick start', click: () => openQuickStart() },
+        { type: 'separator' },
+        { label: 'Adé', enabled: false }
+      ]
+    }
+  ]);
+}
+
+/* One guide window, reused. A second press focuses the one that is open
+   rather than stacking copies behind it. */
+let helpWin = null;
+function openQuickStart() {
+  if (helpWin && !helpWin.isDestroyed()) { helpWin.show(); helpWin.focus(); return; }
+  helpWin = new BrowserWindow({
+    width: 760, height: 720, title: 'Adé — Quick start',
+    backgroundColor: '#f3f4f6', frame: true, resizable: true,
+    /* No preload and no bridge: the guide is TEXT. It has nothing to ask the
+       API for, and giving it a channel it does not need is a channel to keep
+       safe for ever. */
+    webPreferences: { contextIsolation: true, nodeIntegration: false }
+  });
+  helpWin.setMenuBarVisibility(false);
+  helpWin.loadFile('quickstart.html');
+  helpWin.on('closed', () => { helpWin = null; });
+}
+
 function createChatWindow() {
   chatWin = new BrowserWindow({
     width: cfg.chatW || 900, height: cfg.chatH || 620,
@@ -702,6 +745,7 @@ if (!app.requestSingleInstanceLock()) {
     ensureFilesLayout(filesUserData());
     createWindow();
     createTray();
+    Menu.setApplicationMenu(buildAppMenu());
     createChatWindow();
     /* `--open-chat` (passed by adeos-run-avatar.ps1's Open-AvatarChatWindow):
        if another instance holds the single-instance lock this process will
