@@ -590,6 +590,45 @@
       question.className = 'tq';
       question.textContent = String(t.question || '');
       wrap.appendChild(question);
+      /* A question asked into a wall is not a question. Once answered the
+         field is GONE and the answer stands in its place -- offering it again
+         would invite him to answer twice. */
+      if (t.answer) {
+        var given = document.createElement('div');
+        given.className = 'ta';
+        given.textContent = String(t.answer);
+        wrap.appendChild(given);
+      } else {
+        var field = document.createElement('textarea');
+        field.className = 'tfield';
+        field.rows = 3;
+        field.placeholder = 'answer it, or say why you will not';
+        wrap.appendChild(field);
+        var row = document.createElement('div');
+        row.className = 'tactions';
+        var send = document.createElement('button');
+        send.type = 'button';
+        send.className = 'tsend';
+        send.textContent = 'answer';
+        send.addEventListener('click', function () {
+          var text = String(field.value || '').trim();
+          if (!text) return;
+          B.call('/v1/codex/thought/answer', 'POST', { answer: text })
+            .then(function () {
+              /* Re-read rather than patching the card: the answer lives on
+                 the row and only the server knows what else it moved. */
+              renderJournal();
+            }).catch(function (err) {
+              var e = document.createElement('div');
+              e.className = 'sys';
+              e.textContent = 'The answer was not recorded: '
+                + (err && err.message ? err.message : String(err));
+              wrap.appendChild(e);
+            });
+        });
+        row.appendChild(send);
+        wrap.appendChild(row);
+      }
     }
     return wrap;
   }

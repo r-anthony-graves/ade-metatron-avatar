@@ -546,3 +546,26 @@ test('the standing reads line up with the fetch order', () => {
   assert.match(block, /standingThought = \(both\[3\]/);
   assert.match(block, /standingPosition = \(both\[4\]/);
 });
+
+test('the thought offers a way to answer, and only while unanswered', () => {
+  /* The thought turns ONE question on the reader; a card that displays it and
+     offers no way back is a question asked into a wall. Once answered the
+     field is gone and the answer stands in its place -- offering it again
+     would invite him to answer twice.
+
+     Falsified by rendering the field unconditionally, or never. */
+  const at = JS.indexOf('function thoughtCard');
+  const end = JS.indexOf('\n  function ', at + 10);
+  const body = JS.slice(at, end > at ? end : at + 2200);
+  assert.match(body, /t\.answer/, 'the card never looks at the answer');
+  assert.match(body, /createElement\('textarea'\)/,
+    'the card offers no field to answer in');
+});
+
+test('answering the thought posts to its own route', () => {
+  /* Its own record, not a loose journal entry: a stored answer with no
+     question attached is an answer to nothing.
+
+     Falsified by posting it as a journal entry instead. */
+  assert.match(JS, /'\/v1\/codex\/thought\/answer'/);
+});
