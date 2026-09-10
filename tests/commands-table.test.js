@@ -195,15 +195,14 @@ test('no command answers with silence', () => {
   bounds.forEach((b, i) => {
     const stop = i + 1 < bounds.length ? bounds[i + 1].at : b.end + 1200;
     const body = stripComments(SRC.slice(b.end, stop));
-    /* hideChat() / clearThread() / setTab() count: the window going away,
-       the thread emptying, or the whole tab changing IS the feedback.
-       setTab joined the list for /journal, which cannot answer with a push
-       instead -- the journal tab is not a thread tab (its own guard pins
-       that), so push(activeTab, ...) after switching would write into a tab
-       with nothing behind it. */
+    /* hideChat() and clearThread() count: the window going away or the
+       thread emptying IS the feedback. setTab() used to count too, for
+       /journal -- the one command whose tab was not a thread tab, so a
+       push after switching would have written into a tab with nothing
+       behind it. /journal is gone and no command needs that allowance
+       now, so it is off: every remaining branch has to say something. */
     if (body.indexOf('push(') === -1 && body.indexOf('hideChat') === -1
-        && body.indexOf('clearThread') === -1
-        && body.indexOf('setTab(') === -1) silent.push(b.name);
+        && body.indexOf('clearThread') === -1) silent.push(b.name);
   });
   assert.deepEqual([...new Set(silent)].sort(), [],
     'command prints nothing and gives no feedback: ' + silent.join(', '));
