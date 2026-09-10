@@ -729,3 +729,23 @@ test('the quick start covers the rules a walker can get wrong', () => {
     assert.match(QS, new RegExp(section));
   }
 });
+
+test('the quick start walks a worked example, marked as an example', () => {
+  /* Rules alone do not teach the shape; an example alone gets copied into the
+     record. Both, with the example plainly marked -- twice today Adé's
+     invention ended up in Ray's record phrased as his.
+
+     It also runs at a DIFFERENT frontier than the live one, so the shape can
+     be copied without the content being lifted.
+
+     Falsified by removing the example marking, or the steps. */
+  const QS = fs.readFileSync(path.join(__dirname, '..', 'quickstart.html'), 'utf8');
+  assert.match(QS, /Example/, 'nothing is marked as an example');
+  assert.match(QS, /invented for this guide/,
+    'the example does not say it is invented');
+  const steps = (QS.match(/>Step \d</g) || []).length;
+  assert.equal(steps, 6, 'the walkthrough is not six steps');
+  assert.match(QS, /the next day, not the same hour/,
+    'the interval before the analysis is not stated');
+  assert.match(QS, /within 48 hours/, 'the micro-action has no deadline');
+});

@@ -3,25 +3,39 @@
 <title>Adé — Quick start</title>
 <style>
   :root { --steel:#6e7681; --ink:#262a31; --line:#d4d7dd; --panel:#f3f4f6;
-          --yellow:#f7ce3e; --vermilion:#d9451f; }
+          --yellow:#f7ce3e; --vermilion:#d9451f; --green:#5c8129; }
   * { box-sizing:border-box; }
   html, body { margin:0; height:100%; }
   body { background:var(--panel); color:var(--ink); overflow-y:auto;
          font-family:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
          font-size:13.5px; line-height:1.6; }
-  .wrap { max-width:720px; margin:0 auto; padding:22px 26px 48px; }
+  .wrap { max-width:740px; margin:0 auto; padding:22px 26px 56px; }
   h1 { font:400 24px/1.2 Georgia,"Times New Roman",serif; margin:0 0 4px; }
-  .sub { color:var(--steel); font-size:12.5px; margin:0 0 20px; }
+  .sub { color:var(--steel); font-size:12.5px; margin:0 0 18px; }
   h2 { font:600 11px/1 "Segoe UI",sans-serif; letter-spacing:.14em;
        text-transform:uppercase; color:var(--steel);
-       margin:24px 0 8px; padding-top:12px; border-top:1px solid var(--line); }
+       margin:26px 0 10px; padding-top:12px; border-top:1px solid var(--line); }
   p { margin:0 0 9px; }
-  ol, ul { margin:0 0 9px; padding-left:20px; }
+  ul { margin:0 0 9px; padding-left:20px; }
   li { margin-bottom:5px; }
   code { font-family:"Cascadia Mono",Consolas,monospace; font-size:12px;
          background:#fff; border:1px solid var(--line); padding:1px 4px; }
+  .step { background:#fff; border:1px solid var(--line); padding:12px 14px;
+          margin:0 0 10px; }
+  .step .n { font:600 10px/1 "Segoe UI"; letter-spacing:.12em;
+             text-transform:uppercase; color:var(--steel);
+             display:flex; gap:10px; margin-bottom:7px; }
+  .step .when { color:var(--vermilion); }
+  .step h3 { font:600 14px/1.3 "Segoe UI"; margin:0 0 6px; }
+  .ex { background:#fff8ea; border:1px solid #d8c9a8; padding:9px 11px;
+        margin:8px 0 0; font-size:12.5px; }
+  .ex .tag { font:600 9.5px/1 "Segoe UI"; letter-spacing:.12em;
+             text-transform:uppercase; color:#8a6d1f; display:block;
+             margin-bottom:5px; }
+  .ex .f { color:var(--steel); font-size:11px; margin:6px 0 1px; }
+  .ex .v { white-space:pre-wrap; }
   .rule { background:#fff; border:1px solid var(--line);
-          border-left:3px solid var(--vermilion); padding:10px 12px;
+          border-left:3px solid var(--vermilion); padding:11px 13px;
           margin:0 0 12px; }
   .rule b { color:#8e1b2a; }
   .soft { background:#fff; border:1px solid var(--line);
@@ -30,90 +44,197 @@
 <div class="wrap">
 
 <h1>Quick start</h1>
-<p class="sub">The Journal tab, and the rules that are easy to get wrong.</p>
+<p class="sub">One descent, walked through end to end — then the rules that
+are easy to get wrong.</p>
 
-<h2>The morning</h2>
-<p>The <b>Thought for the Day</b> sits at the top of the Journal tab, above
-whichever panel is open. It is written from the Codex's own record — a short
-passage, then <b>one question</b> turned on you.</p>
+<div class="soft">
+Everything in the amber boxes is an <b>example</b>, invented for this guide.
+It runs at a different frontier than yours on purpose, so you can copy the
+<i>shape</i> without copying the content. The words in your record should
+never be mine.
+</div>
+
+<h2>Before you start</h2>
+<p>Open the <b>Journal</b> tab. Two things sit above the panels on every
+subtab:</p>
 <ul>
-  <li><b>One question, always.</b> A second would hand you the easier one to
-      answer, so a completion with two is refused and the day records that
-      instead.</li>
-  <li>Answer it in the field beneath. Once answered the answer stands in place
-      of the field — click <b>answer again</b> to revise it.</li>
-  <li>A day the brain was unreachable says so rather than showing nothing. An
-      absent thought and an unwritten one are not the same thing.</li>
+  <li>the <b>Thought for the Day</b> — a passage and <b>one question</b>,
+      written from the Codex's own record. Answer it in the field beneath;
+      once answered, <b>answer again</b> reopens it.</li>
+  <li>the <b>frontier line</b>, e.g. <i>“harbor — the reef beneath is
+      empty.”</i> That is where a descent is sent. You do not pick it.</li>
 </ul>
 
-<h2>The frontier</h2>
-<p>Beneath the thought is a line like <i>“harbor — the reef beneath is
-empty.”</i> That is the Codex reading its own depth.</p>
+<h2>The walkthrough</h2>
+
+<div class="step">
+  <div class="n"><span>Step 1</span><span class="when">before you sit</span></div>
+  <h3>Begin, and write the Intent</h3>
+  <p>On the <b>Intent</b> panel press <b>begin</b>. The session records the
+  frontier the map gave. Then fill three fields.</p>
+  <p>The objective is the one that matters: write it specifically enough to be
+  <b>wrong</b>. “Seeking clarity” cannot fail, so it teaches nothing. A good
+  objective names something you currently believe and could lose.</p>
+  <div class="ex">
+    <span class="tag">Example — frontier: Current</span>
+    <div class="f">objective</div>
+    <div class="v">I think I am waiting for more information. I suspect I am
+avoiding the conversation. Find out which.</div>
+    <div class="f">correspondences used</div>
+    <div class="v">nothing to hand; lamp off, window open</div>
+    <div class="f">state before</div>
+    <div class="v">restless, slightly defensive</div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="n"><span>Step 2</span><span class="when">before you sit</span></div>
+  <h3>Write the Gateway — including the way out</h3>
+  <p>The door, the route, and the exit. Write the <b>exit protocol now</b>,
+  while you are still able to compose it — not on the way back up.</p>
+  <div class="ex">
+    <span class="tag">Example</span>
+    <div class="f">portal</div>
+    <div class="v">A door at the bottom of a stairwell, already ajar.</div>
+    <div class="f">narrative</div>
+    <div class="v">1. Down, counting the steps.
+2. Stop at the door. Note whether the light behind it moves.
+3. Go through and stand still. Do not follow anything.
+4. Ask the one question in the objective, out loud.</div>
+    <div class="f">exit protocol</div>
+    <div class="v">Back up, the same count. Hand flat on the wall at the top.
+Say aloud what room you are in. Write the Vision Log before speaking
+to anyone.</div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="n"><span>Step 3</span><span class="when">the moment you open your eyes</span></div>
+  <h3>Write the Vision — raw</h3>
+  <p>Four fields, written before you talk to anyone, <b>including Adé</b>.
+  Do not interpret here; that is Step 4's job and it is a day away. If a field
+  is empty, leave it empty — a descent that returned nothing is a real result.</p>
+  <div class="ex">
+    <span class="tag">Example</span>
+    <div class="f">landscape</div>
+    <div class="v">A corridor, warmer than the stairs. Smell of paper.</div>
+    <div class="f">encounter</div>
+    <div class="v">Someone sitting with their back turned. Did not turn round.</div>
+    <div class="f">message</div>
+    <div class="v">Nothing spoken. The impression that they had been waiting a
+long time and had stopped expecting me.</div>
+    <div class="f">oddities</div>
+    <div class="v">I counted eleven steps down and nine back up.</div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="n"><span>Step 4</span><span class="when">the next day, not the same hour</span></div>
+  <h3>Write the Analysis — and the Vision seals</h3>
+  <p>The interval is not delay. It is what lets the subconscious finish and
+  the record gain distance.</p>
+  <p>Note the two fields the original six sections did not have:
+  <b>expected</b> and <b>happened</b>. Without a recorded expectation,
+  surprise is not available as a signal — and surprise is the most reliable
+  evidence that a belief is wrong.</p>
+  <div class="ex">
+    <span class="tag">Example</span>
+    <div class="f">decoding</div>
+    <div class="v">The back turned is not rejection. They stopped expecting me.</div>
+    <div class="f">resonance</div>
+    <div class="v">The step count. It bothered me more than the figure did.</div>
+    <div class="f">mirroring</div>
+    <div class="v">I have been treating the delay as neutral. It has not been.</div>
+    <div class="f">expected</div>
+    <div class="v">That I would find a reason to keep waiting.</div>
+    <div class="f">happened</div>
+    <div class="v">I found someone who had given up waiting for me.</div>
+  </div>
+  <div class="rule" style="margin-top:10px">
+    <b>The moment you record this, the Vision seals — permanently.</b> The
+    Vision panel stops offering its fields and offers an <b>amendment</b>
+    instead: dated, kept beside the original, never over it.<br><br>
+    The reason: the format's claim is that the raw record was captured before
+    interpretation touched it. If the Vision stayed editable afterwards you
+    would get a record that agrees with its own analysis because it was
+    quietly edited to.
+  </div>
+</div>
+
+<div class="step">
+  <div class="n"><span>Step 5</span><span class="when">within 48 hours</span></div>
+  <h3>Write the Integration — one action, in the world</h3>
+  <p>This section <b>refuses an empty action</b>. An insight that changes no
+  behaviour was an experience, not a lesson. Come back afterwards and fill in
+  what actually happened.</p>
+  <div class="ex">
+    <span class="tag">Example</span>
+    <div class="f">action</div>
+    <div class="v">Send the message. Two sentences, no preamble.</div>
+    <div class="f">due at</div>
+    <div class="v">Thursday evening</div>
+    <div class="f">done / outcome</div>
+    <div class="v">Sent Thursday. They replied in an hour. The delay was mine.</div>
+    <div class="f">mantra</div>
+    <div class="v">“They stopped expecting me.”</div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="n"><span>Step 6</span><span class="when">later, across journeys</span></div>
+  <h3>Write the Review</h3>
+  <p>Synchronicities, and recurrence. A recurrence is <b>not</b> a pattern
+  until three things are true: <b>three occurrences</b> counted rather than
+  remembered, the boring explanation <b>written down</b>, and that explanation
+  <b>rejected separately</b> with a reason.</p>
+  <div class="ex">
+    <span class="tag">Example</span>
+    <div class="f">recurrence</div>
+    <div class="v">Third journey where someone is turned away from me. (3 of 3)</div>
+    <div class="f">null hypothesis</div>
+    <div class="v">I am looking for it now, so I am finding it.</div>
+    <div class="f">rejected because</div>
+    <div class="v">The first was before I had the objective; I wrote it down
+without noticing it.</div>
+  </div>
+  <p style="margin-top:8px">A recurrence that fails the test is <b>kept</b>,
+  not deleted — otherwise the same non-pattern arrives fresh next quarter with
+  no memory that it was already looked at.</p>
+</div>
+
+<h2>The rules behind all of that</h2>
+
 <div class="soft">
-Your <b>position</b> is the deepest stratum with every stratum above it
-non-empty. The <b>frontier</b> is the first empty one below. Both are
-<b>read, not chosen</b> — there is no way to set either, which is the point.
+<b>Read, not chosen.</b> Your <b>position</b> is the deepest stratum with every
+stratum above it non-empty; the <b>frontier</b> is the first empty one below.
+There is no way to set either. You may decline a frontier, but the decline is
+recorded with a reason and the frontier does not move.
 </div>
-<p>The frontier is what a descent targets. You may decline it, but declining
-is recorded with a reason and the frontier does not move.</p>
 
-<h2>A descent</h2>
-<p>Open the <b>Intent</b> panel and press <b>begin</b>. Six sections follow,
-filled across days rather than in one sitting:</p>
-<ol>
-  <li><b>Intent</b> — the objective, the correspondences you actually used,
-      your state before. Write the objective specifically enough to be
-      <i>wrong</i>; “seeking clarity” cannot fail and so teaches nothing.</li>
-  <li><b>Gateway</b> — the portal, the path, and the exit protocol. Write the
-      exit <i>before</i> you go in, while you are still able to compose it.</li>
-  <li><b>Vision</b> — raw, the moment you open your eyes. Do not interpret
-      here.</li>
-  <li><b>Analysis</b> — a day later, not the same hour. The interval is what
-      lets the subconscious finish.</li>
-  <li><b>Integration</b> — one small action in the world. This section refuses
-      an empty one: an insight that changes no behaviour was an experience,
-      not a lesson.</li>
-  <li><b>Review</b> — synchronicities, and recurrence across journeys.</li>
-</ol>
-
-<h2>The one thing you cannot undo</h2>
 <div class="rule">
-<b>Writing Analysis seals Vision, permanently.</b> After that the Vision panel
-stops offering fields and offers an <b>amendment</b> instead — dated, kept
-beside the original, never over it.<br><br>
-The reason: the format's whole claim is that the raw record was captured
-before interpretation touched it. If the Vision stays editable afterwards you
-get a record that agrees with its own analysis because it was quietly edited
-to.<br><br>
-So the order is <b>Vision first, then Analysis</b> — and write the Vision
-before speaking to anyone, including Adé.
+<b>Two things cannot be undone.</b> Writing the Analysis seals the Vision, and
+<b>nothing in this store is ever deleted</b> — sessions, sections and answers
+are amended or replaced, never removed.
 </div>
-<p>Nothing in this store is deleted, by design. A session, a section and an
-answer are amended or replaced; none of them are removed.</p>
 
-<h2>What is never judged</h2>
 <p><b>Nothing you write is graded.</b> There is no verdict field anywhere in
-the record — not a score, not a validity flag — so the judgement has nowhere
-to live. Adé may offer a reading; a reading is a hypothesis, not a ruling, and
+the record — no score, no validity flag — so the judgement has nowhere to
+live. Adé may offer a reading; a reading is a hypothesis, not a ruling, and
 agreement between the two of you is agreement rather than evidence.</p>
 
-<h2>A recurrence is not a pattern</h2>
-<p>In <b>Review</b>, three things must be true before something counts:
-<b>three occurrences</b> counted rather than remembered, the boring
-explanation <b>written down</b>, and that explanation <b>rejected
-separately</b> with a reason. A recurrence that fails is kept, not deleted —
-otherwise the same non-pattern arrives fresh next quarter.</p>
+<p><b>One question, always.</b> The Thought for the Day asks exactly one. A
+second would hand you the easier one to answer, so a completion carrying two
+is refused and the day records that instead.</p>
 
 <h2>Odds and ends</h2>
 <ul>
   <li>Typing on the Journal tab with nothing owed <b>writes your entry for the
-      day</b>. It used to become a prompt to the model instead.</li>
+      day</b> — it does not go to the model.</li>
   <li><code>/journal</code> from the Chat tab opens the Journal.</li>
-  <li>Two descents may be open at once — a practice is not obliged to
-      finish.</li>
-  <li>The Codex's own record folds in beneath the sections: the quest board
-      under Gateway, reflections under Analysis, patterns, puzzles and Adé's
-      journal under Review.</li>
+  <li>Two descents may be open at once; a practice is not obliged to finish.</li>
+  <li>The Codex's own record folds in beneath: the quest board under
+      <b>Gateway</b>, reflections under <b>Analysis</b>, patterns, puzzles and
+      Adé's journal under <b>Review</b>.</li>
 </ul>
 
 </div>
