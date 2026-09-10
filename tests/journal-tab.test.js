@@ -671,3 +671,21 @@ test('with no session open the intent panel offers to begin one', () => {
   assert.match(body, /'\/v1\/codex\/pathwork', 'POST'/,
     'nothing opens a session');
 });
+
+test('an answered thought can still be answered again', () => {
+  /* The store REPLACES an answer -- unlike a Vision Log this is considered
+     rather than raw, so it is not sealed. The card hid the field the moment
+     an answer existed, which made the UI stricter than the store and left an
+     answer unrevisable for ever.
+
+     Found the hard way: a marker written during the migration check occupied
+     the slot and there was no way past it.
+
+     Falsified by removing the revise control. */
+  const at = JS.indexOf('function thoughtCard');
+  const body = JS.slice(at, JS.indexOf('function frontierLine', at));
+  assert.match(body, /answer again/,
+    'an answered thought offers no way to revise it');
+  assert.match(body, /field\.hidden|revise/,
+    'the revise control does not reveal the field');
+});

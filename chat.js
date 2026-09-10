@@ -620,22 +620,52 @@
       /* A question asked into a wall is not a question. Once answered the
          field is GONE and the answer stands in its place -- offering it again
          would invite him to answer twice. */
-      if (t.answer) {
+      /* The answer, if there is one, and ALWAYS a way back to the field.
+
+         The store REPLACES an answer -- unlike a Vision Log this is
+         considered rather than raw, so it is not sealed. Hiding the field the
+         moment an answer existed made this view STRICTER THAN THE STORE and
+         left an answer unrevisable for ever. Found the hard way: a marker
+         written during the migration check occupied the slot and there was no
+         way past it.
+
+         The field is hidden rather than absent when an answer stands, so
+         answering again is one click and not a second card. */
+      var answered = !!t.answer;
+      if (answered) {
         var given = document.createElement('div');
         given.className = 'ta';
         given.textContent = String(t.answer);
         wrap.appendChild(given);
-      } else {
+      }
+      {
         var field = document.createElement('textarea');
         field.className = 'tfield';
         field.rows = 3;
+        field.hidden = answered;
+        field.value = answered ? String(t.answer) : '';
         field.placeholder = 'answer it, or say why you will not';
         wrap.appendChild(field);
         var row = document.createElement('div');
         row.className = 'tactions';
+        if (answered) {
+          var again = document.createElement('button');
+          again.type = 'button';
+          again.className = 'wb-unfold';
+          again.textContent = 'answer again';
+          again.addEventListener('click', function () {
+            field.hidden = false;
+            send.hidden = false;
+            again.hidden = true;
+            given.hidden = true;
+            field.focus();
+          });
+          row.appendChild(again);
+        }
         var send = document.createElement('button');
         send.type = 'button';
         send.className = 'tsend';
+        send.hidden = answered;
         send.textContent = 'answer';
         send.addEventListener('click', function () {
           var text = String(field.value || '').trim();
