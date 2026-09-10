@@ -561,14 +561,19 @@ function createTray() {
 /* -------------------------------------------------------------------- IPC */
 /* Named, not inline, so --smoke's pttUp drive can swap it out for a recorder
    and restore exactly this -- see startSmokeRun()'s pttSmoke block. */
-/* Per-route client budgets. Ade OS's /v1/ask deadline is ~400s; /v1/tasks
+/* Per-route client budgets. Ade OS's /v1/ask deadline is 2400s since
+ * 2026-09-10 -- the route runs on DeepSeek-V4-Flash now, whose cold first
+ * round is slow enough that 8 rounds bound at 2400s (ask.py
+ * DEFAULT_DEADLINE_S). 45 min here so the SERVER's deadline is the one that
+ * fires: a client budget below it turns a bounded, reportable timeout into
+ * "Call failed" with the turn still running on the other side. /v1/tasks
  * is an unattended agent turn and routinely runs past two minutes. A single
  * 120s AbortController used to report "Call failed" on every escalated
  * task Enter, while Ade was still working. */
 const ADE_CALL_TIMEOUT_MS = {
   '/v1/tasks': 20 * 60 * 1000,
-  '/v1/ask': 7 * 60 * 1000,
-  '/v1/chat/completions': 7 * 60 * 1000,
+  '/v1/ask': 45 * 60 * 1000,
+  '/v1/chat/completions': 45 * 60 * 1000,
   '/v1/terminal': 5 * 60 * 1000
 };
 const ADE_CALL_TIMEOUT_DEFAULT_MS = 120000;
