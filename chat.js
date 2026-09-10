@@ -36,10 +36,24 @@
      allowed to fail on their own: a Journal that will not render because
      the brain was down this morning is worse than one with no thought at
      the top of it. */
+  /* The Codex's own kinds do not disappear when the six sections arrive --
+     they FOLD, per the foundation document. A TABLE rather than a chain of
+     ifs, for SEALS's reason: a second fold is a data change, visible here.
+
+     Puzzle folds under review rather than integration. An earlier reading put
+     it on the micro-action because "one attempt, never a verdict" sounded
+     like the same sentence; it is not. A puzzle has a right answer checked by
+     hash, and a micro-action has no right answer at all -- folding them
+     together would have made section 5 gradeable, which is the one thing it
+     must not be. */
+  var FOLD = { quest: 'gateway', reflection: 'analysis',
+               pattern: 'review', puzzle: 'review' };
+  var standingSession = null;
+  var standingForm = null;
   var standingMine = [];
   var standingThought = null;
   var standingPosition = null;
-  var activeKind = 'entries';
+  var activeKind = 'intent';
   /* Only a real click on a subtab is a choice; an auto-select is not. The
      owed thing keeps greeting until Ray picks a panel himself. */
   var userPickedKind = false;
@@ -226,6 +240,9 @@
       }),
       B.call('/v1/codex/ocean/position', 'GET', null).catch(function () {
         return null;
+      }),
+      B.call('/v1/codex/pathwork', 'GET', null).catch(function () {
+        return null;
       })
     ]).then(function (both) {
       if (activeTab !== 'journal') return;      /* switched away mid-fetch */
@@ -239,6 +256,16 @@
                          && both[3].data.thought) || null;
       standingPosition = (both[4] && both[4].data
                           && both[4].data.position) || null;
+      var pw = (both[5] && both[5].data) || null;
+      standingForm = (pw && pw.form) || null;
+      /* The OPEN session: the last one nobody has closed. Two may be
+         open at once, so the panel names which it is showing rather
+         than silently picking. */
+      standingSession = null;
+      var all = (pw && pw.sessions) || [];
+      for (var si = all.length - 1; si >= 0; si--) {
+        if (!all[si].closed_at) { standingSession = all[si]; break; }
+      }
       standingMine = (mine && mine.data && mine.data.entries) || [];
       paintJournal((r && r.data && r.data.entries) || []);
     }).catch(function (err) {
@@ -254,7 +281,7 @@
   function paintJournal(entries) {
     var jtabEl = document.getElementById('jtab');
     if (jtabEl) jtabEl.hidden = false;
-    var live = standingPrompt && standingPrompt.kind;
+    var live = standingPrompt && FOLD[standingPrompt.kind];
     var bar = document.querySelectorAll('#jtab .jtab');
     for (var i = 0; i < bar.length; i++) {
       var k = bar[i].getAttribute('data-jtab');
@@ -262,7 +289,7 @@
     }
     /* Auto-select greets the owed thing on every entry until Ray chooses a
        panel himself; with nothing owed, the quiet Entries default. */
-    if (!userPickedKind) activeKind = live || 'entries';
+    if (!userPickedKind) activeKind = live || 'intent';
     journalTabMark(activeKind);
     journalPanel(entries, journalDayKey(entries));
   }
@@ -658,14 +685,208 @@
        is what a session targets whichever panel is open. */
     if (standingThought) threadEl.appendChild(thoughtCard(standingThought));
     if (standingPosition) threadEl.appendChild(frontierLine(standingPosition));
-    switch (activeKind) {
-      case 'quest': questHistoryPanel(dayKey); break;
-      case 'reflection': reflectionHistoryPanel(dayKey); break;
-      case 'pattern': patternHistoryPanel(dayKey); break;
-      case 'puzzle': puzzleHistoryPanel(dayKey); break;
-      default: paintEntries((entries || []).concat(standingMine));
+    sectionPanel(activeKind, dayKey, (entries || []).concat(standingMine));
+  }
+  /* One panel per section: the record if it has been written, the form if it
+     has not, and the Codex's own history folded in beneath.
+
+     A SEALED section shows what it holds and offers an AMENDMENT rather than
+     its fields. Rendering the fields anyway would invite a write the store
+     will refuse, and would hide that the record is closed. */
+  function sectionPanel(section, dayKey, entries) {
+    var fields = (standingForm && standingForm.fields
+                  && standingForm.fields[section]) || [];
+
+    if (!standingSession) {
+      var none = document.createElement('div');
+      none.className = 'sys';
+      none.textContent = 'no descent is open.';
+      threadEl.appendChild(none);
+      if (section === 'intent') beginCard();
+    } else {
+      recordCard(section, fields);
+    }
+    foldedHistory(section, dayKey, entries);
+  }
+
+  /* Opening a descent. The frontier is NOT asked for: the route reads it from
+     the map, because a session whose target came from the client can claim
+     any target it likes. */
+  function beginCard() {
+    var wrap = document.createElement('div');
+    wrap.className = 'sec';
+    var label = document.createElement('div');
+    label.className = 'slabel';
+    label.textContent = 'begin a descent';
+    wrap.appendChild(label);
+    var says = document.createElement('div');
+    says.className = 'sval';
+    says.textContent = standingPosition && standingPosition.frontier
+      ? 'the map gives you the '
+        + String(standingPosition.frontier).toLowerCase() + '.'
+      : 'the map has no reading yet.';
+    wrap.appendChild(says);
+    var actions = document.createElement('div');
+    actions.className = 'sactions';
+    var go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'ssend';
+    go.textContent = 'begin';
+    go.addEventListener('click', function () { openSession({}); });
+    actions.appendChild(go);
+    wrap.appendChild(actions);
+    threadEl.appendChild(wrap);
+  }
+
+  function openSession(body) {
+    B.call('/v1/codex/pathwork', 'POST', body || {})
+      .then(function () { renderJournal(); })
+      .catch(function (err) {
+        var e = document.createElement('div');
+        e.className = 'sys';
+        e.textContent = 'The descent did not open: '
+          + (err && err.message ? err.message : String(err));
+        threadEl.appendChild(e);
+      });
+  }
+
+  function recordCard(section, fields) {
+    var known = (standingSession.sections || {})[section] || null;
+    var sealed = !!(known && known.sealed);
+    var wrap = document.createElement('div');
+    wrap.className = 'sec';
+
+    var label = document.createElement('div');
+    label.className = 'slabel';
+    var name = document.createElement('span');
+    name.textContent = section;
+    label.appendChild(name);
+    if (sealed) {
+      var s = document.createElement('span');
+      s.className = 'sealed';
+      s.textContent = 'sealed';
+      label.appendChild(s);
+    }
+    wrap.appendChild(label);
+
+    if (sealed) {
+      for (var i = 0; i < fields.length; i++) {
+        appendValue(wrap, fields[i], (known.payload || {})[fields[i]]);
+      }
+      amendRow(wrap, section);
+      threadEl.appendChild(wrap);
+      return;
+    }
+
+    var boxes = {};
+    for (var j = 0; j < fields.length; j++) {
+      var n = document.createElement('div');
+      n.className = 'sname';
+      n.textContent = String(fields[j]).replace(/_/g, ' ');
+      wrap.appendChild(n);
+      var box = document.createElement('textarea');
+      box.className = 'sfield';
+      box.rows = 2;
+      box.value = String((known && known.payload
+                          && known.payload[fields[j]]) || '');
+      wrap.appendChild(box);
+      boxes[fields[j]] = box;
+    }
+    var actions = document.createElement('div');
+    actions.className = 'sactions';
+    var send = document.createElement('button');
+    send.type = 'button';
+    send.className = 'ssend';
+    send.textContent = 'record';
+    send.addEventListener('click', function () {
+      var payload = {};
+      for (var key in boxes) {
+        if (Object.prototype.hasOwnProperty.call(boxes, key)) {
+          payload[key] = String(boxes[key].value || '');
+        }
+      }
+      writeSection(section, payload, wrap);
+    });
+    actions.appendChild(send);
+    wrap.appendChild(actions);
+    threadEl.appendChild(wrap);
+  }
+
+  function appendValue(wrap, field, value) {
+    var n = document.createElement('div');
+    n.className = 'sname';
+    n.textContent = String(field).replace(/_/g, ' ');
+    wrap.appendChild(n);
+    var v = document.createElement('div');
+    v.className = 'sval';
+    v.textContent = String(value || '');
+    wrap.appendChild(v);
+  }
+
+  function amendRow(wrap, section) {
+    var note = document.createElement('div');
+    note.className = 'amend';
+    note.textContent = 'sealed by the analysis. A correction is appended, '
+                     + 'dated, beside the original.';
+    wrap.appendChild(note);
+    var box = document.createElement('textarea');
+    box.className = 'sfield';
+    box.rows = 2;
+    box.placeholder = 'amendment';
+    wrap.appendChild(box);
+    var actions = document.createElement('div');
+    actions.className = 'sactions';
+    var send = document.createElement('button');
+    send.type = 'button';
+    send.className = 'ssend';
+    send.textContent = 'amend';
+    send.addEventListener('click', function () {
+      var text = String(box.value || '').trim();
+      if (!text) return;
+      B.call('/v1/codex/pathwork/' + standingSession.id + '/' + section
+             + '/amend', 'POST', { body: text })
+        .then(function () { renderJournal(); })
+        .catch(function () { note.textContent = 'The amendment was not recorded.'; });
+    });
+    actions.appendChild(send);
+    wrap.appendChild(actions);
+  }
+
+  function writeSection(section, payload, wrap) {
+    B.call('/v1/codex/pathwork/' + standingSession.id + '/' + section,
+           'POST', payload)
+      .then(function (r) {
+        var detail = (r && r.data && r.data.detail) || '';
+        if (detail) {
+          var e = document.createElement('div');
+          e.className = 'sys';
+          e.textContent = detail;
+          wrap.appendChild(e);
+          return;
+        }
+        /* Re-read: writing the analysis SEALS the vision, and only the server
+           knows what moved. */
+        renderJournal();
+      }).catch(function (err) {
+        var e = document.createElement('div');
+        e.className = 'sys';
+        e.textContent = 'Not recorded: '
+          + (err && err.message ? err.message : String(err));
+        wrap.appendChild(e);
+      });
+  }
+
+  /* The Codex's own record, folded under the section it belongs to. */
+  function foldedHistory(section, dayKey, entries) {
+    if (section === 'gateway') { questHistoryPanel(dayKey); return; }
+    if (section === 'analysis') { reflectionHistoryPanel(dayKey); return; }
+    if (section === 'review') {
+      patternHistoryPanel(dayKey);
+      puzzleHistoryPanel(dayKey);
+      paintEntries(entries);
     }
   }
+
   function questHistoryPanel(dayKey) {
     if (standingPrompt && standingPrompt.kind === 'quest') {
       threadEl.appendChild(promptCard(dayKey));

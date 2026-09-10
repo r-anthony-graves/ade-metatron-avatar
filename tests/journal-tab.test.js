@@ -233,11 +233,14 @@ test('Ade speaks in the workbook', () => {
 });
 
 test('the journal subtab bar has every kind', () => {
-  /* Each workbook kind owns a subtab, and Entries keeps the journal. A kind
-     with no button is a panel with no entrance. Falsified by dropping one
-     data-jtab button from the markup. */
-  for (const kind of ['quest', 'reflection', 'pattern', 'puzzle', 'entries']) {
-    assert.match(HTML, new RegExp('data-jtab="' + kind + '"'));
+  /* A section with no button is a panel with no entrance. The five Codex
+     kinds owned these buttons until 2026-09-09; they now FOLD under the
+     sections (see the FOLD table) and the six sections own the bar.
+
+     Falsified by dropping one data-jtab button from the markup. */
+  for (const section of ['intent', 'gateway', 'vision', 'analysis',
+                         'integration', 'review']) {
+    assert.match(HTML, new RegExp('data-jtab="' + section + '"'));
   }
   assert.match(HTML, /id="jtab"/);
 });
@@ -259,16 +262,22 @@ test('the live kind owns the dot and is auto-selected', () => {
      greeting re-runs on every entry). With nothing owed, the quiet Entries
      default. Falsified by removing the `activeKind = live` auto-select line,
      by dropping the `|| 'entries'` fallback, or by never toggling the
-     `.live` class. */
+     `.live` class.
+
+     Since 2026-09-09 the greeting lands on the SECTION the owed kind folds
+     to, and the quiet default is the first section rather than the retired
+     Entries panel. The auto-select itself is unchanged, and so is the reason
+     it re-runs: userPickedKind stays false. */
   /* Read from the RAW source, not from `codeOnly`: the toggle's `'live'`
      literal has no 'n', so codeOnly strips it to `toggle('', ...)` -- same
      trap as the 'n'-less route guards and the FRAMING guard. */
   const pj = JS.slice(JS.indexOf('function paintJournal'),
                       JS.indexOf('function journalEntry'));
   assert.match(pj, /classList\.toggle\('live'/);
-  assert.match(pj, /standingPrompt\.kind/);
+  assert.match(pj, /FOLD\[standingPrompt\.kind\]/,
+    'the dot no longer follows the fold');
   assert.match(pj, /activeKind = live/);
-  assert.match(pj, /\|\s*'entries'/);
+  assert.match(pj, /\|\s*'intent'/);
 });
 
 test('panels dispatch per kind', () => {
@@ -276,19 +285,24 @@ test('panels dispatch per kind', () => {
      panel that never renders. Guarded on the RAW JS: codeOnly eats
      `case 'puzzle'` (same trap as the FRAMING guard). Falsified by removing
      one case arm. */
+  /* The switch is gone: every kind is a SECTION now and one dispatch serves
+     all six, with the Codex's own history folded in beneath. What the guard
+     was ever about -- a kind that reaches no panel never renders -- is kept:
+     the dispatch must exist, and every folded kind must reach a panel.
+
+     Falsified by removing the dispatch, or by dropping a fold. */
   const dispatch = JS.slice(JS.indexOf('function journalPanel'),
-                            JS.indexOf('function questHistoryPanel'));
-  const arms = (dispatch.match(/case '(?:quest|reflection|pattern|puzzle)':/g) || []);
-  assert.deepEqual(arms, [
-    "case 'quest':",
-    "case 'reflection':",
-    "case 'pattern':",
-    "case 'puzzle':"
-  ]);
-  /* The DEFAULT ARM, not its argument. Entries now receives Ade's rows
-     concatenated with Ray's own, so pinning the literal call was pinning a
-     detail the guard was never about. Falsified by deleting the default. */
-  assert.match(dispatch, /default: paintEntries\(/);
+                            JS.indexOf('function sectionPanel'));
+  assert.match(dispatch, /sectionPanel\(activeKind/);
+
+  const fold = JS.slice(JS.indexOf('function foldedHistory'),
+                        JS.indexOf('function questHistoryPanel'));
+  for (const panel of ['questHistoryPanel', 'reflectionHistoryPanel',
+                       'patternHistoryPanel', 'puzzleHistoryPanel',
+                       'paintEntries']) {
+    assert.match(fold, new RegExp(panel + '\\('),
+      panel + ' is folded under no section');
+  }
 });
 
 test('each kind panel reads its own history route', () => {
@@ -568,4 +582,92 @@ test('answering the thought posts to its own route', () => {
 
      Falsified by posting it as a journal entry instead. */
   assert.match(JS, /'\/v1\/codex\/thought\/answer'/);
+});
+
+/* --------------------------------------------------------------------------
+   The six Pathwork panels. Ray, 2026-09-09: "build the six panels".
+
+   The five Codex kinds do not disappear -- they FOLD, per the foundation
+   document: quest under the gateway, reflection under the analysis, pattern
+   and puzzle under the review.
+   -------------------------------------------------------------------------- */
+
+test('the subtab bar is the six sections, in order', () => {
+  /* THE ORDER IS THE FORM: analysis is what seals vision, and integration is
+     what a stratum reads. Falsified by a reorder or an omission. */
+  const bar = HTML.slice(HTML.indexOf('id="jtab"'), HTML.indexOf('id="skills"'));
+  const kinds = (bar.match(/data-jtab="(\w+)"/g) || [])
+    .map((m) => m.replace(/data-jtab="|"/g, ''));
+  assert.deepEqual(kinds, ['intent', 'gateway', 'vision', 'analysis',
+                           'integration', 'review']);
+});
+
+test('the old Codex kinds are gone from the bar, not merely hidden', () => {
+  /* A subtab that still exists but is never selected is a panel nobody can
+     reach and everybody maintains. Falsified by leaving one in. */
+  const bar = HTML.slice(HTML.indexOf('id="jtab"'), HTML.indexOf('id="skills"'));
+  for (const gone of ['quest', 'reflection', 'pattern', 'puzzle', 'entries']) {
+    assert.doesNotMatch(bar, new RegExp('data-jtab="' + gone + '"'));
+  }
+});
+
+test('the fold from Codex kind to section is a TABLE', () => {
+  /* Like SEALS in pathwork.py: a second fold is a data change, visible in one
+     place, rather than another arm on a chain of ifs.
+
+     Falsified by inlining the mapping into the dispatch. */
+  const at = JS.indexOf('var FOLD');
+  assert.ok(at > 0, 'no FOLD table');
+  const table = JS.slice(at, JS.indexOf('}', at) + 1);
+  assert.match(table, /quest:\s*'gateway'/);
+  assert.match(table, /reflection:\s*'analysis'/);
+  assert.match(table, /pattern:\s*'review'/);
+  assert.match(table, /puzzle:\s*'review'/);
+});
+
+test('every section panel reads and writes its own section route', () => {
+  /* One route per section, built from the section name -- a panel that posts
+     to another section's path writes the wrong record.
+
+     Falsified by hardcoding one section's path. */
+  assert.match(JS, /'\/v1\/codex\/pathwork'/);
+  /* Scoped to writeSection. Falsifying this the first time broke the WRITE
+     path and stayed green, because amendRow builds the same prefix and
+     satisfied a whole-file search. */
+  const at = JS.indexOf('function writeSection');
+  assert.ok(at > 0, 'no writeSection');
+  const body = JS.slice(at, JS.indexOf('function foldedHistory', at));
+  assert.match(body,
+    /'\/v1\/codex\/pathwork\/' \+ standingSession\.id \+ '\/' \+ section/,
+    'the write path does not build its route from the section name');
+});
+
+test('the vision panel shows the seal and offers amendment once sealed', () => {
+  /* A sealed section that still offers its fields invites a write that will
+     be refused, and hides that the record is now closed.
+
+     Falsified by rendering the fields regardless of sealed. */
+  /* To questHistoryPanel, not to the next function: sectionPanel delegates,
+     and a slice that stopped at the first `function` boundary ended before
+     the code this guard is about. */
+  const at = JS.indexOf('function sectionPanel');
+  assert.ok(at > 0, 'no sectionPanel');
+  const body = JS.slice(at, JS.indexOf('function questHistoryPanel', at));
+  /* The STRUCTURE, not the word. There are two `if (sealed)` branches -- one
+     for the label -- so matching either left this green when the branch that
+     actually withholds the fields was broken. What has to hold is that a
+     sealed section amends and RETURNS, never reaching the field boxes. */
+  assert.match(body, /amendRow\(wrap, section\);\s*threadEl\.appendChild\(wrap\);\s*return;/,
+    'a sealed section does not amend-and-return; it would render its fields');
+});
+
+test('with no session open the intent panel offers to begin one', () => {
+  /* And the frontier it shows comes from the map, not from a field he can
+     type into. Falsified by removing the begin path. */
+  const at = JS.indexOf('function sectionPanel');
+  const body = JS.slice(at, JS.indexOf('function questHistoryPanel', at));
+  assert.match(body, /if \(section === 'intent'\) beginCard\(\)/,
+    'the intent panel does not offer to begin');
+  assert.match(body, /'\/v1\/codex\/pathwork', 'POST'/,
+    'nothing opens a session');
 });
