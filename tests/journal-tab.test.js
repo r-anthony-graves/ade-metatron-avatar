@@ -285,7 +285,10 @@ test('panels dispatch per kind', () => {
     "case 'pattern':",
     "case 'puzzle':"
   ]);
-  assert.match(dispatch, /paintEntries\(entries\)/);
+  /* The DEFAULT ARM, not its argument. Entries now receives Ade's rows
+     concatenated with Ray's own, so pinning the literal call was pinning a
+     detail the guard was never about. Falsified by deleting the default. */
+  assert.match(dispatch, /default: paintEntries\(/);
 });
 
 test('each kind panel reads its own history route', () => {
@@ -448,4 +451,98 @@ test('the pattern page survives a standing block with no by_state', () => {
   assert.doesNotMatch(JS, /standing\.by_state\./,
     'by_state is dereferenced without a fallback');
   assert.match(JS, /\(standing\.by_state \|\| \{\}\)/);
+});
+
+/* --------------------------------------------------------------------------
+   Ray writes too. Ray, 2026-09-09: "there is no place to write a response".
+   -------------------------------------------------------------------------- */
+
+test('the Entries panel does not wipe the standing surfaces', () => {
+  /* journalPanel clears the thread ONCE and then appends the thought card and
+     the frontier line before dispatching. paintEntries used to clear it again
+     on entry -- alone among the five panels, the other four append -- so on
+     the Entries subtab both surfaces were destroyed the moment they were
+     drawn.
+
+     The guard that claimed they stand above EVERY subtab did not catch this:
+     it read journalPanel's own source and never asked what the panel it calls
+     does to the thread.
+
+     Falsified by restoring the clear at the top of paintEntries. */
+  const at = JS.indexOf('function paintEntries');
+  assert.ok(at > 0, 'no paintEntries');
+  const end = JS.indexOf('\n  function ', at + 10);
+  const body = JS.slice(at, end > at ? end : at + 900);
+  assert.doesNotMatch(body, /innerHTML\s*=\s*''/,
+    'paintEntries clears the thread and destroys the thought card above it');
+});
+
+test('a typed line on the Journal tab with nothing owed WRITES an entry', () => {
+  /* It used to fall through to `classify` -- an ordinary ask -- so anything
+     typed here became a prompt to the model instead of a journal entry. For a
+     raw record that is worse than having nowhere to put it.
+
+     Falsified by removing the branch and letting it fall through. */
+  const at = JS.indexOf('function routePlain');
+  const end = JS.indexOf('\n  window.__routePlain', at);
+  const body = JS.slice(at, end > at ? end : at + 1200);
+  assert.match(body, /journal_entry/,
+    'nothing owed on the journal tab still falls through to an ask');
+});
+
+test('the entry kind is dispatched to the write route', () => {
+  /* A route the composer can produce and send() cannot handle would swallow
+     the line silently.
+
+     Falsified by dropping the dispatch, or the POST. */
+  assert.match(JS, /c\.kind === 'journal_entry'/);
+  assert.match(JS, /'\/v1\/codex\/journal', 'POST'/);
+});
+
+test('the Entries panel asks for RAY\'s entries as well as Ade\'s', () => {
+  /* The GET defaults to author=ade and stays that way, so his are asked for
+     by name. Without this his entry is written and never shown.
+
+     Falsified by dropping the author=ray read. */
+  assert.match(JS, /author=ray/);
+});
+
+test('the footer says the journal can be written in, not only answered', () => {
+  /* The hint said "When the Codex asks you something, answer it here", which
+     was true and described a journal you cannot write in unprompted.
+
+     Falsified by restoring the answer-only wording alone. */
+  /* Scoped to the HINT, not the file. The first version searched the whole
+     of chat.js and stayed GREEN when the hint was reverted, because the
+     Entries empty-state also says "write here". A guard that any other
+     string in the file can satisfy is not guarding the thing it names. */
+  const at = JS.indexOf('hint.textContent = "Ad');
+  assert.ok(at > 0, 'no journal hint');
+  const hint = JS.slice(at, JS.indexOf(';', at));
+  assert.match(hint, /write it here/,
+    'the journal hint still describes a surface you can only answer');
+});
+
+test('the standing reads line up with the fetch order', () => {
+  /* renderJournal fetches five routes in one Promise.all and reads them BY
+     INDEX. Inserting a fetch without moving the reads makes a panel render
+     another route's payload -- silently, with no error, because every one of
+     these envelopes is a plain object.
+
+     This guard pins the alignment rather than the comment asking for it.
+     Falsified by reordering the Promise.all without moving the reads. */
+  const at = JS.indexOf('Promise.all([');
+  const block = JS.slice(at, JS.indexOf('}).catch(function (err) {', at));
+  const routes = (block.match(/'\/v1\/codex\/[^']*'/g) || []);
+
+  const idx = (needle) => routes.findIndex((r) => r.indexOf(needle) >= 0);
+  assert.equal(idx('/v1/codex/journal\''), 0, 'the journal is not first');
+  assert.equal(idx('author=ray'), 1, "ray's entries are not second");
+  assert.equal(idx('invitation'), 2, 'the invitation is not third');
+  assert.equal(idx('thought'), 3, 'the thought is not fourth');
+  assert.equal(idx('ocean/position'), 4, 'the position is not fifth');
+
+  assert.match(block, /var r = both\[0\], mine = both\[1\], inv = both\[2\]/);
+  assert.match(block, /standingThought = \(both\[3\]/);
+  assert.match(block, /standingPosition = \(both\[4\]/);
 });

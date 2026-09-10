@@ -36,6 +36,7 @@
      allowed to fail on their own: a Journal that will not render because
      the brain was down this morning is worse than one with no thought at
      the top of it. */
+  var standingMine = [];
   var standingThought = null;
   var standingPosition = null;
   var activeKind = 'entries';
@@ -208,6 +209,12 @@
     threadEl.appendChild(loading);
     Promise.all([
       B.call('/v1/codex/journal', 'GET', null),
+      /* His own, by name: the GET defaults to author=ade and stays that
+         way, so a reader who did not ask for a second writer never
+         silently starts receiving one. */
+      B.call('/v1/codex/journal?author=ray', 'GET', null).catch(function () {
+        return null;
+      }),
       /* The invitation is allowed to fail on its own. A journal that will not
          render because the Codex had nothing to ask is worse than a journal
          with no prompt at the top of it. */
@@ -222,12 +229,17 @@
       })
     ]).then(function (both) {
       if (activeTab !== 'journal') return;      /* switched away mid-fetch */
-      var r = both[0], inv = both[1];
+      /* Index by position deliberately, and keep this list in the same
+         order as the Promise.all above -- inserting a fetch there without
+         moving these reads is how a panel starts rendering another route's
+         payload. */
+      var r = both[0], mine = both[1], inv = both[2];
       standingPrompt = (inv && inv.data && inv.data.invitation) || null;
-      standingThought = (both[2] && both[2].data
-                         && both[2].data.thought) || null;
-      standingPosition = (both[3] && both[3].data
-                          && both[3].data.position) || null;
+      standingThought = (both[3] && both[3].data
+                         && both[3].data.thought) || null;
+      standingPosition = (both[4] && both[4].data
+                          && both[4].data.position) || null;
+      standingMine = (mine && mine.data && mine.data.entries) || [];
       paintJournal((r && r.data && r.data.entries) || []);
     }).catch(function (err) {
       if (activeTab !== 'journal') return;
@@ -612,7 +624,7 @@
       case 'reflection': reflectionHistoryPanel(dayKey); break;
       case 'pattern': patternHistoryPanel(dayKey); break;
       case 'puzzle': puzzleHistoryPanel(dayKey); break;
-      default: paintEntries(entries);
+      default: paintEntries((entries || []).concat(standingMine));
     }
   }
   function questHistoryPanel(dayKey) {
@@ -838,12 +850,15 @@
     });
   }
   function paintEntries(entries) {
-    threadEl.innerHTML = '';
+    /* NO clear here. journalPanel has already emptied the thread and
+       appended the thought card and the frontier line above this panel;
+       clearing again destroyed both the moment they were drawn. The
+       other four panels append, and this one was the odd one out. */
     if (!entries.length) {
       var none = document.createElement('div');
       none.className = 'sys';
       none.textContent = 'No entries yet. The rhythms write one per day, '
-                       + 'week and month.';
+                       + 'week and month -- and you can write here too.';
       threadEl.appendChild(none);
       return;
     }
@@ -955,7 +970,8 @@
       tabLabel.className = '';
       hint.textContent = "Adé's journal, written by the daily, weekly and "
                        + 'monthly rhythms. When the Codex asks you something, '
-                       + 'answer it here.';
+                       + 'answer it here -- otherwise write it here and the '
+                       + 'line becomes your entry for the day.';
       return;
     }
     if (activeTab === 'shell') {
@@ -1158,11 +1174,19 @@
     if (/^[!?/]/.test(v)) return classify(v);
     if (activeTab === 'shell') return { kind: 'shell', text: v };
     /* On the journal tab the composer answers the standing prompt. Only when
-       there IS one and it can be answered -- otherwise the text falls through
-       to an ordinary ask rather than vanishing into a view with no target. */
+       there IS one and it can be answered -- otherwise the line WRITES RAY'S
+       OWN ENTRY for the day.
+
+       It used to fall through to an ordinary ask, which meant anything typed
+       here with nothing owed became a prompt to the model rather than a
+       journal entry. For a raw record that is worse than having nowhere to
+       put it: the thing you wrote to keep is consumed by the thing that was
+       supposed to keep it. Ray, 2026-09-09: "there is no place to write a
+       response". */
     if (activeTab === 'journal' && standingPrompt && standingPrompt.answer_at) {
       return { kind: 'journal', text: v, at: standingPrompt.answer_at };
     }
+    if (activeTab === 'journal') return { kind: 'journal_entry', text: v };
     return classify(v);                          /* chat default: grounded ask */
   }
   window.__routePlain = routePlain;
@@ -1326,6 +1350,27 @@
     renderJournal();
   }
 
+  /* Ray's own entry for the day. One per day per author: the schema carries
+     UNIQUE (period, period_key, author), so Ade's row for the same day stands
+     beside it and re-writing replaces only his own.
+
+     Re-reads rather than patching the view, for handleJournalAnswer's reason:
+     only the server knows what the write changed. */
+  async function handleJournalEntry(c) {
+    input.value = '';
+    try {
+      await B.call('/v1/codex/journal', 'POST', { body: c.text });
+    } catch (err) {
+      var e = document.createElement('div');
+      e.className = 'sys';
+      e.textContent = 'The entry was not written: ' + (err && err.message
+                        ? err.message : String(err));
+      threadEl.appendChild(e);
+      return;
+    }
+    renderJournal();
+  }
+
   var busy = false;
   async function send(text) {
     var raw = (text === undefined) ? input.value : String(text);
@@ -1333,6 +1378,7 @@
     var c = routePlain(raw);
     var targetTab = c.kind === 'shell' ? 'shell' : 'chat';
     if (c.kind === 'journal') { await handleJournalAnswer(c); return; }
+    if (c.kind === 'journal_entry') { await handleJournalEntry(c); return; }
     if (c.kind === 'skill') { await handleSkill(c); return; }
     if (c.kind === 'upload') { await handleUpload(c); return; }
     if (!c.text) { push(targetTab, 'system', 'staged', await emptyHelp(c)); return; }
