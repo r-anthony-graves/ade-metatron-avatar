@@ -102,3 +102,25 @@ test('empty and whitespace-only lines are not commands', () => {
   assert.equal(detect(null).command, false);
   assert.equal(detect(undefined).command, false);
 });
+
+/* ------------------------------------------------- bridge streaming */
+const fs = require('fs');
+const path = require('path');
+
+test('main.js forwards terminal stream chunks to the renderer', () => {
+  const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.ok(main.indexOf("ipcMain.handle('ade:stream'") !== -1,
+    'main.js has no ade:stream handler -- the renderer cannot reach the stream');
+  assert.ok(main.indexOf("'ade:stream:chunk'") !== -1,
+    'main.js does not forward body chunks as ade:stream:chunk');
+  assert.ok(/pathname\.startsWith\('\/v1\/'\)/.test(main),
+    'ade:stream lost the /v1/* refusal from handleAdeCall');
+});
+
+test('preload exposes the streaming surface to the renderer', () => {
+  const preload = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  assert.ok(preload.indexOf('stream: (pathname, body)') !== -1,
+    'preload has no stream() bridge method');
+  assert.ok(preload.indexOf("onStreamChunk: (fn)") !== -1,
+    'preload has no onStreamChunk() bridge method');
+});

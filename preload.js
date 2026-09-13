@@ -11,6 +11,8 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('adeBridge', {
   /* pathname must be /v1/* on 127.0.0.1:8301; main enforces it again */
   call: (pathname, method, body) => ipcRenderer.invoke('ade:call', pathname, method, body),
+  stream: (pathname, body) => ipcRenderer.invoke('ade:stream', pathname, body),
+  onStreamChunk: (fn) => ipcRenderer.on('ade:stream:chunk', (_e, text) => fn(text)),
   state: () => ipcRenderer.invoke('ade:state'),
   config: () => ipcRenderer.invoke('cfg:get'),
   speakEnabled: () => ipcRenderer.invoke('cfg:speak'),

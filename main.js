@@ -586,6 +586,51 @@ function handleAdeCall(_e, pathname, method, body) {
   return ade(pathname, { method: method || 'GET', body: body || null, timeout });
 }
 ipcMain.handle('ade:call', handleAdeCall);
+/* ---- streaming body for /v1/terminal/run ---------------------------
+   The chat window cannot fetch (CSP is default-src 'none'); it gets every
+   /v1 call through this bridge. The /v1/terminal/run response is NDJSON
+   that only ends when the command does, so this pipes body chunks to the
+   calling renderer as they arrive and resolves the invoke once the body is
+   drained. Chunks go only to the window that started the stream. */
+async function adeStream(event, pathname, body) {
+  if (typeof pathname !== 'string' || !pathname.startsWith('/v1/')) {
+    return { ok: false, status: 0, error: 'refused: only /v1/* on the local Ade OS' };
+  }
+  const sender = event.sender;
+  try {
+    const res = await fetch(ADE_BASE + pathname, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      let data;
+      try { data = text ? JSON.parse(text) : null; } catch (e) { data = { raw: text }; }
+      return { ok: false, status: res.status, error: (data && data.error) || ('HTTP ' + res.status) };
+    }
+    if (!res.body) return { ok: true, status: res.status };
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      sender.send('ade:stream:chunk', dec.decode(value, { stream: true }));
+    }
+    return { ok: true, status: res.status };
+  } catch (e) {
+    const msg = String((e && e.message) || e);
+    if (/fetch failed|ECONNREFUSED|ECONNRESET/i.test(msg)) {
+      return {
+        ok: false, status: 0,
+        error: 'Ade OS unreachable at ' + ADE_BASE
+          + ' - it may be restarting. Wait for health, then retry.'
+      };
+    }
+    return { ok: false, status: 0, error: msg };
+  }
+}
+ipcMain.handle('ade:stream', (event, pathname, body) => adeStream(event, pathname, body));
 ipcMain.handle('ade:state', () => state);
 ipcMain.handle('cfg:get', () => cfg);
 ipcMain.handle('app:shortcuts', () => shortcuts);
