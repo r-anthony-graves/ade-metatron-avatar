@@ -149,3 +149,44 @@ test('preload exposes the streaming surface to the renderer', () => {
   assert.ok(preload.indexOf("onStreamChunk: (fn)") !== -1,
     'preload has no onStreamChunk() bridge method');
 });
+
+/* ------------------------------------------------- chat.js source guards */
+/* A guard must be falsified by breaking the thing it guards. These read the
+   shipping file (comments stripped, prose never read) and fail if the
+   behavior they pin disappears from the code. */
+const SRC_CHAT = fs.readFileSync(path.join(__dirname, '..', 'chat.js'), 'utf8');
+function sc(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+}
+const code = sc(SRC_CHAT);
+
+test('routePlain consults the detector for unprefixed lines', () => {
+  assert.ok(code.indexOf('DetectCommandLine(v).command') !== -1,
+    'routePlain no longer asks the detector -- bare commands would all stay chat');
+  assert.ok(code.indexOf('forceChat') !== -1,
+    'routePlain has no forceChat escape -- voice could auto-run a bare command');
+});
+
+test('inline means the Chat thread, not the Shell tab', () => {
+  assert.ok(code.indexOf("c.inline ? 'chat' : 'shell'") !== -1,
+    'an inline command no longer targets the chat thread');
+  assert.ok(code.indexOf("'$ ' + c.text") !== -1
+    || code.indexOf("'$ '") !== -1,
+    'inline user lines no longer render as $ command');
+  assert.ok(code.indexOf("B.stream('/v1/terminal/run'") !== -1,
+    'send() does not reach the streaming endpoint for inline commands');
+});
+
+test('busy never swallows a typed line', () => {
+  assert.ok(code.indexOf('if (!raw.trim() || busy || !B) return;') === -1,
+    'the busy swallow is back: a line typed mid-turn vanishes');
+  assert.ok(code.indexOf('if (busy) {') !== -1,
+    'the busy-staged branch is gone');
+  assert.ok(code.indexOf('input.value = raw') !== -1,
+    'the typed line is not restaged on a busy turn');
+});
+
+test('voice routing is unchanged: bare spoken lines never auto-run', () => {
+  assert.ok(code.indexOf('send(typed, true)') !== -1,
+    'the voice ground-ask line no longer forces chat -- a spoken "git status" would run');
+});

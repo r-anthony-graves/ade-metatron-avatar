@@ -209,7 +209,7 @@ test('no command answers with silence', () => {
 });
 
 test('send() spins words while Ade works and does not persist them', () => {
-  const sendAt = SRC.indexOf('async function send(text)');
+  const sendAt = SRC.indexOf('async function send(text');
   const sendEnd = SRC.indexOf('window.__send = send;');
   assert.ok(sendAt > 0 && sendEnd > sendAt, 'could not find send()');
   const body = SRC.slice(sendAt, sendEnd);

@@ -424,10 +424,13 @@
 
   /* A plain line (no prefix) routes by the active tab. classify() still owns
      everything prefixed. */
-  function routePlain(raw) {
+  function routePlain(raw, forceChat) {
     var v = String(raw == null ? '' : raw).trim();
     if (/^[!?/]/.test(v)) return classify(v);
     if (activeTab === 'shell') return { kind: 'shell', text: v };
+    if (!forceChat && window.DetectCommandLine && DetectCommandLine(v).command) {
+      return { kind: 'shell', text: v, inline: true };
+    }
     return classify(v);                          /* chat default: grounded ask */
   }
   window.__routePlain = routePlain;
@@ -566,11 +569,27 @@
   window.__stopSpin = stopSpin;
 
   var busy = false;
-  async function send(text) {
+  var TERM_SESSION = 'ray-window';
+  var termPump = null;
+  if (B && B.onStreamChunk) B.onStreamChunk(function (chunk) {
+    if (termPump) termPump.feed(chunk || '');
+  });
+  async function send(text, forceChat) {
     var raw = (text === undefined) ? input.value : String(text);
-    if (!raw.trim() || busy || !B) return;
-    var c = routePlain(raw);
-    var targetTab = c.kind === 'shell' ? 'shell' : 'chat';
+    if (!raw.trim() || !B) return;
+    if (busy) {
+      /* Never swallow a typed line. A real note lands in the Chat thread and
+         the exact line is staged back into the input for the next Enter. */
+      push('chat', 'system', 'staged',
+           'Ade is still busy with the previous command — press Enter again once it settles.');
+      setTab('chat');
+      input.value = raw;
+      paintTabLabel();
+      focusInput();
+      return;
+    }
+    var c = routePlain(raw, forceChat);
+    var targetTab = c.kind === 'shell' ? (c.inline ? 'chat' : 'shell') : 'chat';
     if (c.kind === 'skill') { await handleSkill(c); return; }
     if (c.kind === 'upload') { await handleUpload(c); return; }
     if (!c.text) { push(targetTab, 'system', 'staged', await emptyHelp(c)); return; }
@@ -583,7 +602,8 @@
 
     stopSpeaking();
     busy = true;
-    var userText = c.kind === 'shell' ? '! ' + c.text
+    var userText = c.kind === 'shell' && c.inline ? '$ ' + c.text
+                 : c.kind === 'shell' ? '! ' + c.text
                  : c.kind === 'task' ? '/' + (c.type || 'coding') + ' ' + c.text
                  : raw;
     push(targetTab, 'user', c.kind, userText);
@@ -594,7 +614,10 @@
 
     var res;
     try {
-      if (c.kind === 'shell') {
+      if (c.kind === 'shell' && c.inline) {
+        await runInline(c.text);
+        return; // inline owns its presentation and error bubbles; skip send()'s res tail
+      } else if (c.kind === 'shell') {
         res = await B.call('/v1/terminal', 'POST', { cmd: c.text });
       } else if (c.kind === 'ask' && c.route === 'ground') {
         res = await askQuestion(c.text);
@@ -638,6 +661,90 @@
     if (outText && await B.speakEnabled()) speakText(outText);
   }
   window.__send = send;
+
+  /* ---- inline terminal ----------------------------------------------
+     A bare command line in the Chat thread. One stream at a time (send()
+     holds the busy gate for the whole command). Chunks from main arrive via
+     the onStreamChunk listener registered up top; the state object in
+     termPump joins them back into NDJSON lines. */
+  function runInline(cmd) {
+    return new Promise(function (resolve) {
+      var m = null, acc = '', done = false;
+      function finish(r) {
+        if (done) return;
+        done = true;
+        termPump = null;
+        resolve(r);
+      }
+      function bubble() {
+        if (m) return m;
+        m = push('chat', 'ade', 'shell', '');
+        return m;
+      }
+      function paint() {
+        var el = document.querySelector('[data-id="' + m.id + '"] > .bubble');
+        if (el) el.textContent = acc;
+      }
+      termPump = {
+        buf: '',
+        feed: function (chunk) {
+          this.buf += chunk;
+          var idx;
+          while ((idx = this.buf.indexOf('\n')) >= 0) {
+            var line = this.buf.slice(0, idx);
+            this.buf = this.buf.slice(idx + 1);
+            if (!line.trim()) continue;
+            var ev;
+            try { ev = JSON.parse(line); } catch (e) { continue; }
+            if (ev.type === 'out') {
+              acc += (acc ? '\n' : '') + String(ev.text == null ? '' : ev.text);
+              m = bubble();
+              m.text = acc;
+              paint();
+            } else if (ev.type === 'exit') {
+              if (ev.code !== 0) acc += (acc ? '\n' : '') + '[exit ' + ev.code + ']';
+              m = bubble();
+              m.text = acc || '(no output)';
+              paint();
+              persist();
+              finish({ ok: true });
+            } else if (ev.type === 'error') {
+              m = bubble();
+              m.text = acc + (acc ? '\n' : '') + String(ev.text == null ? '' : ev.text);
+              paint();
+              persist();
+              finish({ ok: true });
+            }
+          }
+        }
+      };
+      B.stream('/v1/terminal/run', { session: TERM_SESSION, cmd: cmd })
+        .then(function (r) {
+          if (!r || !r.ok) {
+            if (m) {
+              m.text = (acc ? acc + '\n' : '') + '[stream ended: '
+                + (r && (r.error || ('HTTP ' + r.status)) || 'no response from Ade OS') + ']';
+              paint();
+              persist();
+              finish({ ok: true });
+            } else {
+              finish({ ok: false,
+                error: (r && (r.error || ('HTTP ' + r.status))) || 'no response from Ade OS' });
+            }
+          }
+        })
+        .catch(function (e) {
+          if (m) {
+            m.text = (acc ? acc + '\n' : '') + '[stream ended: ' + String(e && e.message || e) + ']';
+            paint();
+            persist();
+            finish({ ok: true });
+          } else {
+            finish({ ok: false, error: String(e && e.message || e) });
+          }
+        });
+    });
+  }
 
   /* The one place a /v1/ask reply becomes UI. An escalate payload used to
      jump to a Task tab and stage `/coding …` for a second Enter. There is
@@ -796,6 +903,7 @@
       push('chat', 'ade', 'error', ev.text || 'Microphone unavailable.');
       return;
     }
+    if (ev.dictate && ev.engine === 'windows') return;
     if (ev.empty) {
       if (B) B.openChat('chat'); setTab('chat');
       push('chat', 'system', 'staged', 'Listening.');
@@ -821,7 +929,7 @@
     var c = classify(typed);
     if (c.kind === 'ask' && c.route === 'ground') {
       if (B) B.openChat('chat'); setTab('chat');
-      void send(typed);
+      void send(typed, true);
       return;
     }
     var target = c.kind === 'shell' ? 'shell' : 'chat';
