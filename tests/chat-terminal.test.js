@@ -107,14 +107,39 @@ test('empty and whitespace-only lines are not commands', () => {
 const fs = require('fs');
 const path = require('path');
 
+/* Slice of main.js covering ONLY the adeStream function body (from its
+   declaration to the next ipcMain.handle registration). Whole-file scans
+   are not falsifiable for this handler: handleAdeCall carries the same
+   /v1/ refusal line and ade() carries the AbortController/timeout
+   machinery, so both the refusal guard and the no-timeout guard must be
+   scoped to the stream handler itself. */
+function adeStreamBody(main) {
+  const start = main.indexOf('async function adeStream');
+  assert.ok(start !== -1, 'main.js has no adeStream function -- the stream bridge is gone');
+  const end = main.indexOf('ipcMain.handle(', start);
+  assert.ok(end !== -1, 'adeStream body runs into no ipcMain.handle(...) -- slice anchor gone');
+  return main.slice(start, end);
+}
+
 test('main.js forwards terminal stream chunks to the renderer', () => {
   const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   assert.ok(main.indexOf("ipcMain.handle('ade:stream'") !== -1,
     'main.js has no ade:stream handler -- the renderer cannot reach the stream');
   assert.ok(main.indexOf("'ade:stream:chunk'") !== -1,
     'main.js does not forward body chunks as ade:stream:chunk');
-  assert.ok(/pathname\.startsWith\('\/v1\/'\)/.test(main),
-    'ade:stream lost the /v1/* refusal from handleAdeCall');
+  assert.ok(/pathname\.startsWith\('\/v1\/'\)/.test(adeStreamBody(main)),
+    'adeStream lost the /v1/* refusal -- a renderer-supplied pathname would POST un-gated');
+});
+
+test('adeStream body has no timeout: long terminal commands must never die silently', () => {
+  const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const stream = adeStreamBody(main);
+  assert.ok(!/AbortController/.test(stream),
+    'adeStream gained AbortController -- the no-timeout invariant is broken');
+  assert.ok(!/AbortSignal/.test(stream),
+    'adeStream gained AbortSignal -- the no-timeout invariant is broken');
+  assert.ok(!/setTimeout/.test(stream),
+    'adeStream gained setTimeout -- the no-timeout invariant is broken');
 });
 
 test('preload exposes the streaming surface to the renderer', () => {

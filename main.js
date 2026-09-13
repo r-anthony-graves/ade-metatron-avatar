@@ -617,6 +617,7 @@ async function adeStream(event, pathname, body) {
       if (done) break;
       sender.send('ade:stream:chunk', dec.decode(value, { stream: true }));
     }
+    const tail = dec.decode(); if (tail) sender.send('ade:stream:chunk', tail);
     return { ok: true, status: res.status };
   } catch (e) {
     const msg = String((e && e.message) || e);
