@@ -122,6 +122,20 @@ test('the wake path startles the mood core', () => {
     'waking Ade must also flash the startled mood');
 });
 
+test('ui.js never stages non-wake speech from the Windows fallback engine', () => {
+  assert.match(UI, /command === null[\s\S]{0,160}u\.engine\s*===\s*['"]windows['"]/,
+    'with the whisper sidecar down, /v1/voice/listen answers from Windows ' +
+    'Speech\'s closed 9-phrase grammar, which maps room tone onto stock ' +
+    'commands ("stop", "check the health", "read the file"); staging that ' +
+    'text would make the idle chat type its own prompts');
+});
+
+test('chat.js drops a Windows-engine dictate before it reaches the composer', () => {
+  assert.match(CHAT, /ev\.dictate\s*&&[\s\S]{0,60}engine\s*===\s*['"]windows['"]/,
+    'the staging site must defensively ignore a Windows-fallback dictate even ' +
+    'if some other producer relays one');
+});
+
 /* ---- Task 5: glyph renderer — per-mood palettes, bursts, mode baselines ---- */
 
 const GLYPH = read('glyph.js');

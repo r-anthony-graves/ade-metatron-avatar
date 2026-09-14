@@ -152,6 +152,12 @@
        nothing ever appeared in the input. It still does not dispatch -- it
        lands in the chat box so you can see it and press Enter. */
     if (command === null) {
+      if (u.engine === 'windows') return;
+      /* Windows' grammared engine is only the travel sentence: with the
+         whisper sidecar down, its closed 9-phrase grammar maps room tone
+         straight onto the stock commands and the idle mic would type them
+         into the chat by itself. Non-wake audio is staged only when an
+         open-vocabulary engine actually heard it. */
       if (B) B.saySpeech({ text: raw, engine: u.engine || '', dictate: true });
       return;
     }
