@@ -199,8 +199,11 @@ test('a failed inline run never swallows the line: error bubble and restage', ()
   assert.ok(inlineEnd > inlineAt,
     'runInline body lost its closing anchor -- slice drifted');
   const inlineBody = code.slice(inlineAt, inlineEnd);
-  assert.ok(inlineBody.indexOf("push('chat', 'ade', 'error',") !== -1,
-    'a pre-frame runInline failure pushes no Ade error bubble -- a twin-down line is silently eaten');
+  // BOTH failure branches (the .then ok:false and the .catch reject) must
+  // push an Ade error bubble -- two occurrences, not one: a single surviving
+  // branch would leave the other failure mode silent again.
+  assert.ok(inlineBody.split("push('chat', 'ade', 'error',").length - 1 >= 2,
+    'a runInline failure branch stopped pushing an Ade error bubble -- a twin-down line is silently eaten');
   assert.ok(inlineBody.indexOf('Call failed: ') !== -1,
     'the inline error bubble no longer names the bridge cause');
   const sendAt = code.indexOf('async function send(text');
@@ -211,4 +214,12 @@ test('a failed inline run never swallows the line: error bubble and restage', ()
     'send() discards runInline\'s result -- a failed inline line is never restaged');
   assert.ok(sendBody.indexOf('!ok.ok') !== -1,
     'send() does not check runInline\'s failure -- a failed inline line is never restaged');
+  // And within the inline failure branch itself: the restage line up to the
+  // inline return. The global input.value = raw above is the busy branch's --
+  // deleting the inline one must fail this.
+  const inlineFail = code.slice(
+    code.indexOf('var ok = await runInline(c.text)'),
+    code.indexOf('return; // inline owns its presentation'));
+  assert.ok(inlineFail.indexOf('input.value = raw') !== -1,
+    'a failed inline run restages nothing into the composer -- the line is lost');
 });
