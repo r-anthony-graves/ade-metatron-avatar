@@ -615,7 +615,15 @@
     var res;
     try {
       if (c.kind === 'shell' && c.inline) {
-        await runInline(c.text);
+        var ok = await runInline(c.text);
+        if (ok && !ok.ok) {
+          /* A failed inline run must not eat the line: runInline pushed the
+             error bubble; restage the exact line so Enter retries it. */
+          input.value = raw;
+          paintTabLabel();
+          focusInput();
+          if (B.glyphEvent) B.glyphEvent('failed');
+        }
         return; // inline owns its presentation and error bubbles; skip send()'s res tail
       } else if (c.kind === 'shell') {
         res = await B.call('/v1/terminal', 'POST', { cmd: c.text });
@@ -728,8 +736,12 @@
               persist();
               finish({ ok: true });
             } else {
-              finish({ ok: false,
-                error: (r && (r.error || ('HTTP ' + r.status))) || 'no response from Ade OS' });
+              push('chat', 'ade', 'error',
+                ('Call failed: ' + ((r && (r.error || ('HTTP ' + r.status)))
+                  || 'no response from Ade OS'))
+                + '\n\nThe message is staged in the input — press Enter to retry.');
+              persist();
+              finish({ ok: false });
             }
           }
         })
@@ -740,7 +752,11 @@
             persist();
             finish({ ok: true });
           } else {
-            finish({ ok: false, error: String(e && e.message || e) });
+            push('chat', 'ade', 'error',
+              ('Call failed: ' + String(e && e.message || e))
+              + '\n\nThe message is staged in the input — press Enter to retry.');
+            persist();
+            finish({ ok: false });
           }
         });
     });

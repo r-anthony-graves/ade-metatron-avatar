@@ -190,3 +190,25 @@ test('voice routing is unchanged: bare spoken lines never auto-run', () => {
   assert.ok(code.indexOf('send(typed, true)') !== -1,
     'the voice ground-ask line no longer forces chat -- a spoken "git status" would run');
 });
+
+test('a failed inline run never swallows the line: error bubble and restage', () => {
+  const inlineAt = code.indexOf('function runInline(cmd)');
+  assert.ok(inlineAt !== -1,
+    'runInline is gone from chat.js -- inline commands would stop working');
+  const inlineEnd = code.indexOf('function applyAskResult(result)', inlineAt);
+  assert.ok(inlineEnd > inlineAt,
+    'runInline body lost its closing anchor -- slice drifted');
+  const inlineBody = code.slice(inlineAt, inlineEnd);
+  assert.ok(inlineBody.indexOf("push('chat', 'ade', 'error',") !== -1,
+    'a pre-frame runInline failure pushes no Ade error bubble -- a twin-down line is silently eaten');
+  assert.ok(inlineBody.indexOf('Call failed: ') !== -1,
+    'the inline error bubble no longer names the bridge cause');
+  const sendAt = code.indexOf('async function send(text');
+  const sendEnd = code.indexOf('window.__send = send;');
+  assert.ok(sendAt > 0 && sendEnd > sendAt, 'could not find send()');
+  const sendBody = code.slice(sendAt, sendEnd);
+  assert.ok(sendBody.indexOf('var ok = await runInline(c.text)') !== -1,
+    'send() discards runInline\'s result -- a failed inline line is never restaged');
+  assert.ok(sendBody.indexOf('!ok.ok') !== -1,
+    'send() does not check runInline\'s failure -- a failed inline line is never restaged');
+});
