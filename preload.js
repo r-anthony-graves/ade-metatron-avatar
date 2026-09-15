@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('adeBridge', {
   onSize: (fn) => ipcRenderer.on('ui:size', (_e, px) => fn(px)),
   onNote: (fn) => ipcRenderer.on('ui:note', (_e, msg) => fn(msg)),
   onBacking: (fn) => ipcRenderer.on('ui:backing', (_e, on) => fn(on)),
+  onBreathe: (fn) => ipcRenderer.on('ui:breathe', (_e, on) => fn(on)),
   onSpeak: (fn) => ipcRenderer.on('ui:speak', (_e, t) => fn(t)),
   onHush: (fn) => ipcRenderer.on('ui:hush', () => fn()),
   micState: (live) => ipcRenderer.send('mic:state', !!live),

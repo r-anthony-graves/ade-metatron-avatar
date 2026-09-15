@@ -61,7 +61,7 @@ function dot(sp,x,y,r,a){ if(a<=0.004||r<=0.06) return; ctx.globalAlpha=a; ctx.d
    and grey, working it burns, and a decision waiting on a human turns it amber
    and starts throwing arcs until somebody answers. */
 var ALERT=[178,18,43];        /* crimson: the one signal that must not blend in */
-var ADE = { online:false, busy:false, pending:0, brain:'', res:0.10, alert:0, spark:0, backing:true,
+var ADE = { online:false, busy:false, pending:0, brain:'', res:0.10, alert:0, spark:0, backing:true, breathe:true,
             speaking:0, speak:0, hearing:0, hear:0, micLit:0 };
 ADE.apply = function(st){
   this.online = !!st.online; this.busy = !!st.busy;
@@ -1038,7 +1038,13 @@ function drawCore(t, u, res, asm){
     }
     if(ADE.alert > 0.01){ HOT = mix(HOT, ALERT, ADE.alert*0.85); MID = mix(MID, ALERT, ADE.alert*0.85); }
   }
-  var breatheAmp = MOOD.mood ? MOODS[MOOD.mood].breathe : 0.20;
+  /* Amplitude zero leaves `breathe` at exactly 1 below, so the core
+     holds the size and brightness its mood and the live audio give
+     it -- steady, not dim. MOOD.burst and MOOD.ember are further
+     down the same line and are deliberately untouched: those are
+     events, not idling. */
+  var breatheAmp = ADE.breathe === false ? 0
+    : (MOOD.mood ? MOODS[MOOD.mood].breathe : 0.20);
   var devTick = MOOD.mode === 'dev' ? 0.9 + 0.1 * Math.sin(NOWS * 6) : 1;
   var flickK = MOOD.flick ? 0.85 + 0.15 * Math.sin(NOWS * 20) : 1;
   var breathe = flickK * (1 + breatheAmp * pulse * (0.35 + 0.85 * res) * devTick);
@@ -1273,6 +1279,7 @@ window.GLYPH = {
   setMic: setMic,
   setAde: function(st){ ADE.apply(st||{}); },
   setBacking: function(on){ ADE.backing = !!on; },
+  setBreathe: function(on){ ADE.breathe = !!on; },
   setSpeaking: function(v){ ADE.speak = clamp(+v || 0, 0, 1); },
   /* Ade's mouth is setSpeaking; YOUR voice is this. Two callers, two channels --
      they were one, and that is why the orb looked the same either way. */

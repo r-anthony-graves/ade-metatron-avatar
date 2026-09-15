@@ -38,7 +38,7 @@ let chatWin = null;                 /* the desktop conversation window */
    renderer reported painted pixels under the cursor -- and a window that
    never got that hover event stayed permanently click-through. */
 let overPaint = true, lastIgnore = null;
-let cfg = { x: null, y: null, size: 380, clickThrough: false, speak: false, opacity: 1, backing: true, mic: true, micGlyph: false,
+let cfg = { x: null, y: null, size: 380, clickThrough: false, speak: false, opacity: 1, backing: true, breathe: true, mic: true, micGlyph: false,
             mode: 'auto', chatX: null, chatY: null, chatW: 900, chatH: 620 };
 let micLive = false;   /* what the renderer last reported, for the tray label */
 let state = { online: false, busy: false, pending: 0, brain: '', approval: null };
@@ -556,6 +556,12 @@ function buildMenu() {
       label: 'Backing glow', type: 'checkbox', checked: cfg.backing !== false,
       toolTip: 'A soft dark halo so the glyph reads on a pale wallpaper. Off is pure transparency.',
       click: (mi) => { cfg.backing = mi.checked; saveCfg(); if (win) win.webContents.send('ui:backing', mi.checked); }
+    },
+    {
+      label: 'Breathing', type: 'checkbox', checked: cfg.breathe !== false,
+      toolTip: 'The slow pulse of the core. Off holds it steady; bursts and '
+             + 'the live microphone still move it.',
+      click: (mi) => { cfg.breathe = mi.checked; saveCfg(); if (win) win.webContents.send('ui:breathe', mi.checked); }
     },
     { label: 'Mode', submenu: [
       { label: 'Auto', type: 'radio', checked: (cfg.mode || 'auto') === 'auto',

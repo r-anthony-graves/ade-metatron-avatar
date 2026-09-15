@@ -228,6 +228,7 @@
       if (window.ADE_MOOD) window.ADE_MOOD.tint(payload);
     });
     B.onBacking(function (on) { if (window.GLYPH) window.GLYPH.setBacking(on); });
+    B.onBreathe(function (on) { if (window.GLYPH) window.GLYPH.setBreathe(on); });
 
     /* ------------------------------------------------ the live mic */
     function setMicUi() {
@@ -253,6 +254,7 @@
     B.config().then(function (c) {
       if (c && c.mic !== false) { void micOn(); } else { setMicUi(); }
       if (c && window.GLYPH) window.GLYPH.setBacking(c.backing !== false);
+      if (c && window.GLYPH) window.GLYPH.setBreathe(c.breathe !== false);
     });
     B.state().then(function (s) { if (s && window.GLYPH) window.GLYPH.setAde(s); });
 
