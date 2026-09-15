@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('adeBridge', {
   onStreamChunk: (fn) => ipcRenderer.on('ade:stream:chunk', (_e, text) => fn(text)),
   state: () => ipcRenderer.invoke('ade:state'),
   config: () => ipcRenderer.invoke('cfg:get'),
+  tabChanged: (tab) => ipcRenderer.send('chat:tab', tab),
   speakEnabled: () => ipcRenderer.invoke('cfg:speak'),
   speak: (text) => ipcRenderer.invoke('ade:speak', text),
 

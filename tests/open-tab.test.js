@@ -65,9 +65,15 @@ test('the first instance honours the same flag', () => {
 });
 
 test('the renderer refuses a tab it does not have', () => {
-  /* The safety half: an unknown name must not blank the window. */
-  assert.ok(CHAT.includes('if (tab && TABS.indexOf(tab) >= 0) setTab(tab);'),
-    'chat:focus must check the name against TABS');
+  /* The safety half: an unknown name must not blank the window.
+
+     Matched as a PROPERTY, not as exact wording. This was pinned to the
+     literal line and broke the day that line gained a tabChosen flag
+     beside its setTab call -- the check it guards was untouched. A guard
+     that fires on a rewording it does not care about gets loosened by
+     whoever it annoys, which is how real guards get lost. */
+  assert.match(CHAT, /if \(tab && TABS\.indexOf\(tab\) >= 0\)[^\n]*setTab\(tab\)/,
+    'chat:focus must check the name against TABS before switching');
   assert.ok(/if \(allTabs\(\)\.indexOf\(tab\) < 0\) tab = 'chat';/.test(CHAT),
     'setTab must fall back to chat for anything unknown');
 });

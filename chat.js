@@ -261,7 +261,18 @@
     showPath(tab === 'path');
     renderThread();
     paintTabLabel();
+    /* Remember it, so the window reopens where it was left. */
+    if (B && B.tabChanged) B.tabChanged(tab);
   }
+
+  /* Set once ANYTHING has deliberately picked a tab -- a click, a focus
+     event naming one, or an approval seizing Chat. The saved-tab restore
+     below reads this and stands down, because it resolves from an async
+     config call and would otherwise undo a deliberate choice a moment
+     after it was made. An approval is the case that matters: nothing may
+     navigate away from it. */
+  var tabChosen = false;
+  window.__tabChosen = function () { return tabChosen; };
 
   /* ------------------------------------------------------------ the Path
      Frames The Path's own pages. It is a separate project on loopback,
@@ -1203,6 +1214,7 @@
     if (lastApprovalCardId() !== id) {
       push('chat', 'ade', 'approval', '', { approval: a });
     }
+    tabChosen = true;             /* nothing may navigate away from this */
     setTab('chat');
     if (B) B.openChat('chat');                 /* auto-raise on a NEW approval */
   }
@@ -1277,7 +1289,10 @@
     if (!B) return;
     var tabs = document.querySelectorAll('#tabs .tab');
     for (var i = 0; i < tabs.length; i++) {
-      tabs[i].addEventListener('click', function () { setTab(this.getAttribute('data-tab')); });
+      tabs[i].addEventListener('click', function () {
+        tabChosen = true;
+        setTab(this.getAttribute('data-tab'));
+      });
     }
     var subs = document.querySelectorAll('#subtabs .subtab');
     for (var s = 0; s < subs.length; s++) {
@@ -1971,8 +1986,16 @@
     B.onState(handleState);
     B.onSpeech(handleSpeech);
     B.onNote(function (m) { push('chat', 'system', 'staged', String(m)); });
+    /* Reopen on the tab this window was left showing. Skipped if
+       anything has already chosen one -- see `tabChosen`. */
+    if (B.config) {
+      B.config().then(function (c) {
+        if (tabChosen || !c || !c.tab) return;
+        if (TABS.indexOf(c.tab) >= 0) setTab(c.tab);
+      }).catch(function () {});
+    }
     B.onChatFocus(function (tab) {
-      if (tab && TABS.indexOf(tab) >= 0) setTab(tab);
+      if (tab && TABS.indexOf(tab) >= 0) { tabChosen = true; setTab(tab); }
       renderThread();
       focusInput();
     });

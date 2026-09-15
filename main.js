@@ -39,6 +39,7 @@ let chatWin = null;                 /* the desktop conversation window */
    never got that hover event stayed permanently click-through. */
 let overPaint = true, lastIgnore = null;
 let cfg = { x: null, y: null, size: 380, clickThrough: false, speak: false, opacity: 1, backing: true, breathe: true, mic: true, micGlyph: false,
+            tab: 'chat',
             mode: 'auto', chatX: null, chatY: null, chatW: 900, chatH: 620 };
 let micLive = false;   /* what the renderer last reported, for the tray label */
 let state = { online: false, busy: false, pending: 0, brain: '', approval: null };
@@ -709,6 +710,15 @@ ipcMain.handle('ade:state', () => state);
    mid-load is how a setting comes back "sometimes". */
 ipcMain.handle('glyph:micWanted', () => !!cfg.micGlyph);
 ipcMain.handle('cfg:get', () => cfg);
+/* The chat window reports the tab it is showing so it can reopen
+   there. Only on a CHANGE: this arrives on every switch, and
+   saveCfg writes the file synchronously. */
+ipcMain.on('chat:tab', (_e, tab) => {
+  if (typeof tab === 'string' && tab && cfg.tab !== tab) {
+    cfg.tab = tab;
+    saveCfg();
+  }
+});
 ipcMain.handle('app:shortcuts', () => shortcuts);
 ipcMain.handle('cfg:speak', () => !!cfg.speak);
 /* The renderer owns the microphone; main only mirrors its state for the tray
