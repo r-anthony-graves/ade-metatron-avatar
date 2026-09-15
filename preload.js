@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld('adeBridge', {
   /* ---- glyph-window events (unchanged) ---- */
   onState: (fn) => ipcRenderer.on('ade:state', (_e, s) => fn(s)),
   onArm: (fn) => ipcRenderer.on('ui:arm', () => fn()),
+  onDisarm: (fn) => ipcRenderer.on('ui:disarm', () => fn()),
+  micWanted: () => ipcRenderer.invoke('glyph:micWanted'),
   onSize: (fn) => ipcRenderer.on('ui:size', (_e, px) => fn(px)),
   onNote: (fn) => ipcRenderer.on('ui:note', (_e, msg) => fn(msg)),
   onBacking: (fn) => ipcRenderer.on('ui:backing', (_e, on) => fn(on)),

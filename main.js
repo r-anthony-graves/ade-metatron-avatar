@@ -38,10 +38,40 @@ let chatWin = null;                 /* the desktop conversation window */
    renderer reported painted pixels under the cursor -- and a window that
    never got that hover event stayed permanently click-through. */
 let overPaint = true, lastIgnore = null;
-let cfg = { x: null, y: null, size: 380, clickThrough: false, speak: false, opacity: 1, backing: true, mic: true,
+let cfg = { x: null, y: null, size: 380, clickThrough: false, speak: false, opacity: 1, backing: true, mic: true, micGlyph: false,
             mode: 'auto', chatX: null, chatY: null, chatW: 900, chatH: 620 };
 let micLive = false;   /* what the renderer last reported, for the tray label */
 let state = { online: false, busy: false, pending: 0, brain: '', approval: null };
+
+/* ---------------------------------------------------------------- errors
+   A renderer that throws leaves a glyph that draws and answers nothing --
+   see the note in startSmokeRun, which captured this only under --smoke.
+   The Avatar runs detached with no stdout anyone reads, so the record has
+   to be a file. Warnings and errors only, capped, append-only. */
+const RENDERER_LOG = () => path.join(app.getPath('userData'), 'renderer.log');
+const RENDERER_LOG_CAP = 256 * 1024;
+function watchRenderer(wc, label) {
+  const write = (line) => {
+    if (SMOKE) return;
+    try {
+      const file = RENDERER_LOG();
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      try {
+        if (fs.statSync(file).size > RENDERER_LOG_CAP) fs.unlinkSync(file);
+      } catch (e) {}
+      fs.appendFileSync(
+        file, new Date().toISOString() + ' [' + label + '] ' + line + '\n');
+    } catch (e) {}
+  };
+  wc.on('console-message', (_e, level, message, line, sourceId) => {
+    if (level >= 2) {
+      write('[' + String(sourceId || '').split('/').pop() + ':' + line + '] '
+            + message);
+    }
+  });
+  wc.on('preload-error', (_e, p2, err) => write('PRELOAD ' + p2 + ': ' + err));
+  wc.on('render-process-gone', (_e, d) => write('GONE ' + JSON.stringify(d)));
+}
 
 function loadCfg() {
   try { Object.assign(cfg, JSON.parse(fs.readFileSync(CFG_PATH(), 'utf8'))); } catch (e) {}
@@ -352,6 +382,7 @@ function applyHit() {
   lastIgnore = !wants;
   win.setIgnoreMouseEvents(lastIgnore, { forward: true });
   win.setFocusable(false);
+  watchRenderer(win.webContents, 'win');
   win.setAlwaysOnTop(true, 'screen-saver');   /* setFocusable rebuilds the styles */
 }
 
@@ -424,6 +455,7 @@ function createChatWindow() {
       backgroundThrottling: false
     }
   });
+  watchRenderer(chatWin.webContents, 'chatWin');
   chatWin.loadFile('chat.html');
   const saveBounds = () => {
     if (!chatWin || chatWin.isDestroyed()) return;
@@ -476,7 +508,17 @@ function buildMenu() {
       click: () => win && win.webContents.send('ui:micToggle')
     },
     { label: micLive ? '  microphone is OPEN' : '  microphone track is stopped', enabled: false },
-    { label: 'Mic drives the glyph', type: 'checkbox', checked: false, click: () => win && win.webContents.send('ui:arm') },
+    /* A REAL checkbox now. It was typed as one while `GLYPH.arm()` was
+       one-way and `checked` was hardcoded false, so the tick never
+       matched the state and a restart silently dropped it -- unlike the
+       three checkboxes below, which have always persisted. */
+    {
+      label: 'Mic drives the glyph', type: 'checkbox', checked: !!cfg.micGlyph,
+      click: (mi) => {
+        cfg.micGlyph = mi.checked; saveCfg();
+        if (win) win.webContents.send(mi.checked ? 'ui:arm' : 'ui:disarm');
+      }
+    },
     { type: 'separator' },
     {
       label: 'Click-through', type: 'checkbox', checked: !!cfg.clickThrough,
@@ -633,6 +675,9 @@ async function adeStream(event, pathname, body) {
 }
 ipcMain.handle('ade:stream', (event, pathname, body) => adeStream(event, pathname, body));
 ipcMain.handle('ade:state', () => state);
+/* The glyph asks once its renderer is ready. Pushing at a window
+   mid-load is how a setting comes back "sometimes". */
+ipcMain.handle('glyph:micWanted', () => !!cfg.micGlyph);
 ipcMain.handle('cfg:get', () => cfg);
 ipcMain.handle('app:shortcuts', () => shortcuts);
 ipcMain.handle('cfg:speak', () => !!cfg.speak);

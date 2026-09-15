@@ -191,6 +191,14 @@
       if (window.GLYPH) window.GLYPH.setAde(s);
     });
     B.onArm(function () { if (window.GLYPH) window.GLYPH.arm(); });
+    B.onDisarm(function () { if (window.GLYPH) window.GLYPH.disarm(); });
+    /* Ask, rather than be pushed at. The renderer is ready here; main
+       has no way to know that from its side. */
+    if (B.micWanted) {
+      B.micWanted().then(function (on) {
+        if (on && window.GLYPH) window.GLYPH.arm();
+      }).catch(function () {});
+    }
     B.onSpeak(function (t) { speakText(t); });
     B.onHush(function () { stopSpeaking(); });
     B.onPttDown(function () { pttDown(); });

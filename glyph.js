@@ -1292,6 +1292,10 @@ window.GLYPH = {
     level: AUDIO.level || 0, env: AUDIO.env || 0,
     mood: MOOD.mood, mode: MOOD.mode, burst: +MOOD.burst.toFixed(3), tint: !!MOOD.tint }; },
   arm: function(){ tryArm(); },
+  /* `AUDIO.disarm` has existed since the audio path was written and
+     nothing ever called it -- the tray item that should have was
+     one-way. */
+  disarm: function(){ AUDIO.disarm(); },
   isArmed: function(){ return AUDIO.on; }
 };
 window.addEventListener('resize', resize, {passive:true});
