@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;">
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src http://127.0.0.1:8412;">
 <title>Ade</title>
 <style>
   :root {
@@ -51,6 +51,26 @@
     font-family:"Cascadia Mono","Consolas",ui-monospace,monospace; font-size:11.5px; }
   .msg.sys { font-size:10.5px; color:var(--steel); margin:6px 2px; text-align:center; }
   .meta { font-size:9.5px; color:var(--steel); margin:2px 4px; }
+  /* The Path panel. `#path[hidden]` needs saying explicitly: the display
+     rule below would otherwise beat the HTML `hidden` attribute. */
+  #path { flex:1 1 auto; display:flex; flex-direction:column; min-height:0; }
+  #path[hidden] { display:none; }
+  #subtabs { flex:0 0 auto; display:flex; align-items:center; gap:2px;
+             padding:5px 12px; background:#fff;
+             border-bottom:1px solid var(--line); }
+  #subtabs .grow { flex:1 1 auto; }
+  .subtab { font:600 10px/1 "Segoe UI",sans-serif; letter-spacing:.07em;
+            text-transform:uppercase; color:var(--steel); background:none;
+            border:1px solid transparent; border-radius:3px;
+            padding:5px 8px; cursor:pointer; }
+  .subtab:hover { color:var(--ink); }
+  .subtab.on { color:var(--ink); border-color:var(--line); background:var(--panel); }
+  #path-frame { flex:1 1 auto; width:100%; border:0; background:#fff;
+                min-height:0; }
+  #path-note { flex:0 0 auto; margin:0; padding:6px 12px;
+               font:400 10.5px/1.4 "Segoe UI",system-ui,sans-serif;
+               color:var(--steel); background:#fff;
+               border-top:1px solid var(--line); }
   footer { flex:0 0 auto; border-top:1px solid var(--line); background:#fff; padding:8px 12px; }
   .row { display:flex; align-items:center; gap:7px; }
   #tab-label { font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--steel);
@@ -115,9 +135,26 @@
   <div id="tabs">
     <button class="tab on" data-tab="chat" type="button">Chat</button>
     <button class="tab" data-tab="shell" type="button">Shell</button>
+    <button class="tab" data-tab="path" type="button">Path</button>
   </div>
   <div id="skills"></div>
   <main id="thread"></main>
+  <section id="path" hidden>
+    <div id="subtabs">
+      <button class="subtab on" data-route="/" type="button">Today</button>
+      <button class="subtab" data-route="/diary" type="button">Diary</button>
+      <button class="subtab" data-route="/read" type="button">Read</button>
+      <button class="subtab" data-route="/study" type="button">Study</button>
+      <button class="subtab" data-route="/catalogue" type="button">Catalogue</button>
+      <button class="subtab" data-route="/stage" type="button">Stage</button>
+      <span class="grow"></span>
+      <button class="subtab" id="path-reload" type="button">Reload</button>
+    </div>
+    <iframe id="path-frame" src="about:blank" title="The Path"></iframe>
+    <p id="path-note">The Path serves itself at 127.0.0.1:8412 and is a
+      separate project. If this stays blank it is not running &mdash;
+      start it with <b>thepath serve</b>.</p>
+  </section>
 <footer>
     <div id="cmdlist" hidden></div>
     <div class="row">

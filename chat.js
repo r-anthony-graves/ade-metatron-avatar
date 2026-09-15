@@ -18,7 +18,7 @@
   var micBtn = document.getElementById('mic');
   var state = { online: false, busy: false, pending: 0, brain: '', approval: null };
 
-  var TABS = ['chat', 'shell'];
+  var TABS = ['chat', 'shell', 'path'];
   /* Only a real click on a subtab is a choice; an auto-select is not. The
      owed thing keeps greeting until Ray picks a panel himself. */
   function allTabs() { return TABS.slice(); }
@@ -169,7 +169,10 @@
   };
 
   function renderThread() {
+    /* `path` is a PANEL, not a conversation -- it has no thread, and
+       reading `threads.path.length` would throw on every tab switch. */
     var list = threads[activeTab];
+    if (!list) return;
     threadEl.innerHTML = '';
     for (var i = 0; i < list.length; i++) threadEl.appendChild(renderMsg(list[i]));
     threadEl.scrollTop = threadEl.scrollHeight;
@@ -255,11 +258,49 @@
     for (var i = 0; i < tabs.length; i++) {
       tabs[i].classList.toggle('on', tabs[i].getAttribute('data-tab') === tab);
     }
+    showPath(tab === 'path');
     renderThread();
     paintTabLabel();
   }
+
+  /* ------------------------------------------------------------ the Path
+     Frames The Path's own pages. It is a separate project on loopback,
+     and this knows nothing about it beyond the URL -- the same posture
+     the `companion` agent takes, which reaches it only by running its
+     CLI the way a person would. */
+  var PATH_ORIGIN = 'http://127.0.0.1:8412';
+  var pathEl = document.getElementById('path');
+  var pathFrame = document.getElementById('path-frame');
+  var pathRoute = '/';
+  function showPath(on) {
+    if (!pathEl) return;
+    pathEl.hidden = !on;
+    threadEl.hidden = on;
+    /* LAZY. Nothing is requested until Ray opens the tab, so starting
+       the Avatar never pokes a server that may not be running. */
+    if (on && pathFrame.getAttribute('src') === 'about:blank') {
+      pathFrame.setAttribute('src', PATH_ORIGIN + pathRoute);
+    }
+  }
+  function goPath(route) {
+    pathRoute = route;
+    pathFrame.setAttribute('src', PATH_ORIGIN + route);
+    var subs = document.querySelectorAll('#subtabs .subtab');
+    for (var i = 0; i < subs.length; i++) {
+      var r = subs[i].getAttribute('data-route');
+      if (r) subs[i].classList.toggle('on', r === route);
+    }
+  }
   function paintTabLabel() {
-    if (activeTab === 'shell') {
+    if (activeTab === 'path') {
+      /* The box still asks Ade -- it is the same input on every tab.
+         The hint says where the writing actually goes, because a page
+         with a text box above a workbook invites the wrong assumption. */
+      tabLabel.textContent = 'Ask';
+      tabLabel.className = '';
+      hint.textContent = 'The Path is its own project on 127.0.0.1:8412. '
+        + 'Writing goes in the page above; this box still asks Ade.';
+    } else if (activeTab === 'shell') {
       tabLabel.textContent = 'Shell';
       tabLabel.className = 'shell';
       hint.textContent = 'Direct subprocess — NOT gated by Permission.check(). Enter to run.';
@@ -1237,6 +1278,14 @@
     var tabs = document.querySelectorAll('#tabs .tab');
     for (var i = 0; i < tabs.length; i++) {
       tabs[i].addEventListener('click', function () { setTab(this.getAttribute('data-tab')); });
+    }
+    var subs = document.querySelectorAll('#subtabs .subtab');
+    for (var s = 0; s < subs.length; s++) {
+      subs[s].addEventListener('click', function () {
+        var r = this.getAttribute('data-route');
+        if (r) goPath(r);
+        else pathFrame.setAttribute('src', PATH_ORIGIN + pathRoute);
+      });
     }
     function selectedText() {
       var s = window.getSelection();
