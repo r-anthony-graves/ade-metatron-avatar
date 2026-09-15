@@ -493,6 +493,16 @@ function createChatWindow() {
  * second-instance call openChat() with no tab, and without chat:focus
  * the window shows but #in never receives keystrokes (BrowserWindow
  * focus ≠ input focus on Windows). */
+/* `--open-chat` opens the window; `--open-chat=path` opens that tab.
+ * Read from a GIVEN argv, not process.argv, because the second-instance
+ * handler is passed the argv of the launch that woke us -- which is the
+ * whole point: the single-instance lock turns a second launch into a
+ * remote control for the running app. */
+function tabFromArgv(argv) {
+  const hit = (argv || []).find((a) => a.startsWith('--open-chat='));
+  return hit ? hit.slice('--open-chat='.length) : null;
+}
+
 function openChat(tab) {
   if (!chatWin || chatWin.isDestroyed()) return;
   if (cfg.chatX != null) {
@@ -796,7 +806,12 @@ ipcMain.on('app:copy', (_e, text) => clipboard.writeText(String(text || '')));
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => { openChat(); });
+  /* Electron hands us the argv of the launch that woke us. It was
+     being discarded, so `electron . --open-chat=path` raised the
+     window on whatever tab it happened to be showing. */
+  app.on('second-instance', (_e, argv) => {
+    openChat(tabFromArgv(argv));
+  });
 
   app.whenReady().then(() => {
     const sess = session.defaultSession;
@@ -818,7 +833,12 @@ if (!app.requestSingleInstanceLock()) {
        have quit here already and the running one raises its window via the
        second-instance handler above; arriving here means we ARE the first
        instance, so open the conversation window ourselves. */
-    if (process.argv.includes('--open-chat')) setTimeout(openChat, 400);
+    const wantsChat = process.argv.some(
+      (a) => a === '--open-chat' || a.startsWith('--open-chat='));
+    if (wantsChat) {
+      const tab = tabFromArgv(process.argv);
+      setTimeout(() => openChat(tab), 400);
+    }
     pollAde();
     timer = setInterval(pollAde, 2000);
 
