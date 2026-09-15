@@ -98,6 +98,24 @@
   var HIT_ALPHA = 48;
   var HIT_PAD = 5;
   var hitOn = null, hitAt = 0;
+  /* NOT `{ willReadFrequently: true }`, and the console will keep
+     telling you otherwise. MEASURED 2026-09-15, in Chromium:
+
+       same object returned by 2nd getContext : true
+       willReadFrequently after asking for it : false
+
+     Context attributes are fixed by the FIRST getContext on a canvas.
+     glyph.js:14 already took this one with { alpha: AVATAR }, and
+     glyph.js loads before ui.js in avatar.html -- so adding the flag
+     HERE changes nothing at all while looking exactly like a fix. The
+     Canvas2D advice in the renderer log points at this line and is
+     wrong about it.
+
+     The only place it would take effect is glyph.js:14, the surface the
+     glyph paints every frame. Measured there with the readback running,
+     it is 1.01x -- no gain -- and it would trade the whole render path's
+     backing for a probe that reads 11x11 pixels, only on mousemove, at
+     most once per 16ms. Not worth it. */
   var probe = cvs.getContext('2d');
 
   function painted(px, py) {
