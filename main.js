@@ -47,9 +47,23 @@ let state = { online: false, busy: false, pending: 0, brain: '', approval: null 
    A renderer that throws leaves a glyph that draws and answers nothing --
    see the note in startSmokeRun, which captured this only under --smoke.
    The Avatar runs detached with no stdout anyone reads, so the record has
-   to be a file. Warnings and errors only, capped, append-only. */
+   to be a file. Errors only (see the threshold below), capped,
+   append-only. */
 const RENDERER_LOG = () => path.join(app.getPath('userData'), 'renderer.log');
 const RENDERER_LOG_CAP = 256 * 1024;
+/* Chromium console levels: 0 verbose, 1 info, 2 WARNING, 3 ERROR.
+   Started at 2, copied from the smoke harness -- right for a self-test,
+   which wants to see every complaint. Wrong for a permanent log: the
+   first thing it recorded was Chromium advising willReadFrequently on a
+   canvas where the flag cannot be set (see ui.js), twice per session,
+   forever. Errors only (Ray, 2026-09-15).
+
+   The preload-error and render-process-gone handlers below are NOT
+   gated by this -- a renderer that failed to load its bridge, or died
+   outright, is recorded whatever the threshold says. Those are the two
+   failures this log exists for, and neither arrives as a console
+   message at all. */
+const RENDERER_LOG_LEVEL = 3;
 function watchRenderer(wc, label) {
   const write = (line) => {
     if (SMOKE) return;
@@ -64,7 +78,7 @@ function watchRenderer(wc, label) {
     } catch (e) {}
   };
   wc.on('console-message', (_e, level, message, line, sourceId) => {
-    if (level >= 2) {
+    if (level >= RENDERER_LOG_LEVEL) {
       write('[' + String(sourceId || '').split('/').pop() + ':' + line + '] '
             + message);
     }

@@ -86,4 +86,28 @@ test('renderer errors are recorded outside the smoke harness', () => {
     'a self-test must not write into the real log');
   assert.ok(body.includes('RENDERER_LOG_CAP'),
     'an uncapped log on a long-running desktop app grows without bound');
+  assert.ok(body.includes('level >= RENDERER_LOG_LEVEL'),
+    'the threshold must be named, not a bare number in a condition');
+});
+
+test('the log records errors, not Chromium performance advice', () => {
+  /* It started at 2 -- warnings -- copied from the smoke harness, where
+     seeing every complaint is the point. In a permanent log the first
+     thing it caught was Chromium recommending willReadFrequently on a
+     canvas where the flag cannot be set at all, twice a session. */
+  assert.match(MAIN, /const RENDERER_LOG_LEVEL = 3;/,
+    'Chromium levels: 0 verbose, 1 info, 2 warning, 3 error');
+  const body = MAIN.split('function watchRenderer(')[1].slice(0, 1200);
+  assert.ok(!/level >= 2/.test(body), 'warnings must not reach the log');
+  /* The two failures the log exists for do not arrive as console
+     messages at all, so they must not be behind the threshold. */
+  assert.ok(/wc\.on\('preload-error'/.test(body),
+    'a bridge that failed to load must always be recorded');
+  assert.ok(/wc\.on\('render-process-gone'/.test(body),
+    'a renderer that died must always be recorded');
+  const gated = body.split('level >= RENDERER_LOG_LEVEL')[1] || '';
+  assert.ok(!gated.includes("wc.on('preload-error'")
+            || body.indexOf("wc.on('preload-error'")
+               > body.indexOf('level >= RENDERER_LOG_LEVEL'),
+    'the unconditional handlers must sit outside the level check');
 });
