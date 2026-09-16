@@ -351,9 +351,54 @@ async function currentVoice() {
   return (r.ok && r.data && r.data.values && r.data.values.tts_voice) || '';
 }
 
+/* Booting the twin, which the avatar is a client to.
+ *
+ * Ray, 2026-09-16: "the avatar should be independent of Ade OS". It was
+ * not -- start the avatar with nothing on 8301 and you got a glyph and a
+ * chat window that answered every message with "Ade OS unreachable",
+ * until you noticed the tray had a "Boot twin." item and clicked it. The
+ * capability was there; only the knowing-to-use-it was manual.
+ *
+ * INDEPENDENT OF BEING STARTED FIRST, NOT INDEPENDENT OF THE GATE. The
+ * avatar still routes everything through the twin, because that is what
+ * keeps `Permission.check()` in front of every destructive tool -- see
+ * the note at the top of this file. Owning its own chat and tools would
+ * make this an ungated second execution path, which is precisely what
+ * `assert_no_bypass()` exists to catch. So the avatar starts the thing
+ * that governs it; it does not replace it.
+ *
+ * ONCE PER RUN. A twin that cannot start must not have a launcher thrown
+ * at it every two seconds for the rest of the day -- that is a fork bomb
+ * on a 2s timer. One attempt, then the existing tray item is how Ray
+ * retries deliberately. */
+let twinBootAttempted = false;
+
+function bootTwin(reason) {
+  const launcher = path.join(__dirname, '..', '..', 'scripts',
+                             'adeos-run-avatar.ps1');
+  if (!fs.existsSync(launcher)) {
+    console.error('[twin] launcher not found at ' + launcher);
+    return false;
+  }
+  console.error('[twin] booting (' + reason + '): ' + launcher);
+  const p = spawn('powershell.exe',
+                  ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', launcher],
+                  { detached: true, stdio: 'ignore', windowsHide: true });
+  p.unref();
+  return true;
+}
+
 async function pollAde() {
   const h = await ade('/v1/health', { timeout: 4000 });
   const online = !!(h.ok && h.data && h.data.status === 'up');
+
+  /* The twin is down and nobody has tried yet, so try -- once. `online`
+     is the whole test: a twin that answers health is one we must not
+     start a second of, and `adeos-run-avatar.ps1` refuses that anyway. */
+  if (!online && !twinBootAttempted) {
+    twinBootAttempted = true;
+    bootTwin('nothing answering at ' + ADE_BASE);
+  }
   let busy = false, pending = 0, brain = '', approval = null;
 
   if (online) {
@@ -589,12 +634,14 @@ function buildMenu() {
     { label: 'Open files', click: () => openFilesFolder() },
     { label: 'Open Ade API', click: () => shell.openExternal(ADE_BASE + '/v1/health') },
     { label: 'Restart Ade OS…', click: async () => { const r = await ade('/v1/restart', { method: 'POST', body: {} }); dialogNote(r.ok ? 'Restart requested.' : 'Restart failed: ' + (r.error || r.status)); } },
+    /* The deliberate retry. `pollAde` now boots the twin once by itself
+       when it finds nothing there, so this is the second try after that
+       one failed. It boots WITHOUT consulting the latch -- a person
+       asking is not the thing the latch guards against -- and leaves it
+       set, so the 2s poll still never starts one on its own again. */
     { label: 'Boot twin.', click: () => {
-      const twinLauncher = path.join(__dirname, '..', '..', 'scripts', 'adeos-run-avatar.ps1');
-      const p = spawn('powershell.exe', ['-File', twinLauncher], {
-        detached: true, stdio: 'ignore', windowsHide: true,
-      });
-      p.unref();
+      twinBootAttempted = true;
+      bootTwin('asked from the tray');
       setTimeout(pollAde, 3000);
     } },
     { type: 'separator' },
