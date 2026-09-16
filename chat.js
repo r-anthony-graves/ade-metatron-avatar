@@ -283,6 +283,60 @@
   var pathEl = document.getElementById('path');
   var pathFrame = document.getElementById('path-frame');
   var pathRoute = '/';
+
+  /* ---------------------------------------------------- the new day
+     Every page The Path serves is day-dependent -- today's prompt, the
+     study guide, the stage of the cycle -- and an iframe loaded at
+     23:50 goes on showing yesterday for ever. Nothing here knew the
+     date had turned.
+
+     IT NOTIFIES, IT DOES NOT RELOAD, and that is deliberate. Four of
+     the six routes hold a textarea Ray writes into: Today (the prompt
+     and the entry), Diary, Stage, Study. The frame is cross-origin, so
+     nothing on this side can see whether there is half an entry sitting
+     in one. An automatic reload would be right most nights and would,
+     one night, silently delete something he had written -- which is far
+     worse than a stale page he can see is stale. So the bar appears and
+     he decides.
+
+     The one case that IS reloaded without asking is a frame still at
+     `about:blank`: nothing has been typed into a page that was never
+     loaded. That is already how `showPath` behaves and it stays. */
+  var pathStale = document.getElementById('path-stale');
+  var pathStaleText = document.getElementById('path-stale-text');
+  var pathLoadedOn = null;          /* local date the frame last fetched */
+
+  function dayKey(d) {
+    d = d || new Date();
+    return d.getFullYear() + '-'
+      + ('0' + (d.getMonth() + 1)).slice(-2) + '-'
+      + ('0' + d.getDate()).slice(-2);
+  }
+  function pathLoaded() {
+    return pathFrame && pathFrame.getAttribute('src') !== 'about:blank';
+  }
+  function markPathFresh() {
+    pathLoadedOn = dayKey();
+    if (pathStale) pathStale.hidden = true;
+  }
+  function checkPathDay() {
+    if (!pathStale || !pathLoaded() || !pathLoadedOn) return;
+    var now = dayKey();
+    if (now === pathLoadedOn) return;
+    pathStaleText.textContent =
+      'It is now ' + now + '. This page was loaded on ' + pathLoadedOn
+      + ' and still shows that day.';
+    pathStale.hidden = false;
+  }
+  function reloadPath() {
+    /* about:blank first, so the navigation happens even when the target
+       URL is identical to the one already there. The server now sends
+       `Cache-Control: no-store`, so this is a real fetch. */
+    pathFrame.setAttribute('src', 'about:blank');
+    pathFrame.setAttribute('src', PATH_ORIGIN + pathRoute);
+    markPathFresh();
+  }
+
   function showPath(on) {
     if (!pathEl) return;
     pathEl.hidden = !on;
@@ -291,10 +345,16 @@
        the Avatar never pokes a server that may not be running. */
     if (on && pathFrame.getAttribute('src') === 'about:blank') {
       pathFrame.setAttribute('src', PATH_ORIGIN + pathRoute);
+      markPathFresh();
+    } else if (on) {
+      /* Opening the tab is the moment he is most likely to be looking,
+         so say it now rather than up to a minute later. */
+      checkPathDay();
     }
   }
   function goPath(route) {
     pathRoute = route;
+    markPathFresh();
     pathFrame.setAttribute('src', PATH_ORIGIN + route);
     var subs = document.querySelectorAll('#subtabs .subtab');
     for (var i = 0; i < subs.length; i++) {
@@ -1299,9 +1359,24 @@
       subs[s].addEventListener('click', function () {
         var r = this.getAttribute('data-route');
         if (r) goPath(r);
-        else pathFrame.setAttribute('src', PATH_ORIGIN + pathRoute);
+        else reloadPath();
       });
     }
+    /* The day bar's own two buttons, and the clock that raises it.
+       60s is not a guess about precision -- the bar only has to appear
+       before Ray next looks at the tab, and `showPath` already covers
+       the case where he looks first. */
+    var staleReload = document.getElementById('path-stale-reload');
+    var staleDismiss = document.getElementById('path-stale-dismiss');
+    if (staleReload) staleReload.addEventListener('click', reloadPath);
+    if (staleDismiss) staleDismiss.addEventListener('click', function () {
+      /* Dismiss hides the bar for THIS day only: `pathLoadedOn` moves to
+         today, so tomorrow raises it again. It does not reload, because
+         "not now" is exactly the answer of someone with something typed
+         into the page. */
+      markPathFresh();
+    });
+    setInterval(checkPathDay, 60000);
     function selectedText() {
       var s = window.getSelection();
       if (s && s.toString()) return s.toString();

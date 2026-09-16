@@ -67,6 +67,22 @@
   .subtab.on { color:var(--ink); border-color:var(--line); background:var(--panel); }
   #path-frame { flex:1 1 auto; width:100%; border:0; background:#fff;
                 min-height:0; }
+  /* The day-rollover notice. It REPLACES nothing and covers nothing --
+     the page underneath stays exactly as Ray left it, because he may
+     have half a diary entry in it. A bar that says the page is stale is
+     worth more than a reload that silently eats his writing. */
+  #path-stale { flex:0 0 auto; display:flex; align-items:center; gap:10px;
+                margin:0; padding:7px 12px; background:#fff8e1;
+                border-bottom:1px solid #e6cf7a; color:#6b5312;
+                font:400 11px/1.4 "Segoe UI",system-ui,sans-serif; }
+  #path-stale[hidden] { display:none; }
+  #path-stale .grow { flex:1 1 auto; }
+  #path-stale button { font:600 10px/1 "Segoe UI",sans-serif;
+                       letter-spacing:.07em; text-transform:uppercase;
+                       color:#6b5312; background:#fff; cursor:pointer;
+                       border:1px solid #e6cf7a; border-radius:3px;
+                       padding:5px 9px; }
+  #path-stale button:hover { background:#fdf3d4; }
   #path-note { flex:0 0 auto; margin:0; padding:6px 12px;
                font:400 10.5px/1.4 "Segoe UI",system-ui,sans-serif;
                color:var(--steel); background:#fff;
@@ -150,6 +166,12 @@
       <span class="grow"></span>
       <button class="subtab" id="path-reload" type="button">Reload</button>
     </div>
+    <p id="path-stale" hidden>
+      <span id="path-stale-text"></span>
+      <span class="grow"></span>
+      <button id="path-stale-reload" type="button">Reload</button>
+      <button id="path-stale-dismiss" type="button">Not now</button>
+    </p>
     <iframe id="path-frame" src="about:blank" title="The Path"></iframe>
     <p id="path-note">The Path serves itself at 127.0.0.1:8412 and is a
       separate project. If this stays blank it is not running &mdash;
