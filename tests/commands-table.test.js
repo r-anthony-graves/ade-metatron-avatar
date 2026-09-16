@@ -235,6 +235,17 @@ test('chat sends the thread with /v1/ask', () => {
     'threadHistory must drop spin/system rows');
 });
 
+test('threadHistory caps match the server (40 turns x 4000 chars)', () => {
+  const at = SRC.indexOf('function threadHistory(list)');
+  const end = SRC.indexOf('window.__threadHistory');
+  assert.ok(at > 0 && end > at, 'threadHistory() not found');
+  const body = SRC.slice(at, end);
+  assert.ok(body.indexOf('slice(0, 4000)') !== -1,
+    "per-turn cap drifted from the server's 4000 chars");
+  assert.ok(body.indexOf('slice(-40)') !== -1,
+    "row cap drifted from the server's 40 turns");
+});
+
 test('a dead Ade OS is not reported as fetch failed', () => {
   const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   assert.ok(/fetch failed\|ECONNREFUSED/.test(main),

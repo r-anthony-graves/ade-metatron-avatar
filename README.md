@@ -39,7 +39,7 @@ tab's default. The prefixes still override at every turn:
 
 | You type (or the tab you are in) | Where it goes |
 |---|---|
-| Chat tab: `what is in glyph.js` | `POST /v1/ask` — the last 12 Chat turns go with the question; Ade brainstorms or plans in-thread when the work is new; the reply stays on Chat |
+| Chat tab: `what is in glyph.js` | `POST /v1/ask` — the last 40 Chat turns go with the question; Ade brainstorms or plans in-thread when the work is new; the reply stays on Chat |
 | Chat tab: `search the web for …` | same `/v1/ask` loop — no Task tab, no second Enter |
 | `/qa run the trust-level suite` | `POST /v1/tasks` — an agent does the work; the result lands on Chat |
 | Shell tab, or `!git status` | `POST /v1/terminal` — direct subprocess |

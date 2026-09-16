@@ -571,7 +571,7 @@
   function threadHistory(list) {
     /* Prior Chat turns for /v1/ask. Spin/system rows are not a conversation.
        The last user line is the question being asked — drop it so it is not
-       sent twice. Same cap the server sanitizes to (12). */
+       sent twice. Same cap the server sanitizes to (40). */
     var src = list || [];
     var out = [];
     var i, m, role, text;
@@ -583,11 +583,11 @@
       if (m.role === 'user') role = 'user';
       else if (m.role === 'ade') role = 'assistant';
       else continue;
-      if (text.length > 2500) text = text.slice(0, 2500) + '…';
+      if (text.length > 4000) text = text.slice(0, 4000) + '…';
       out.push({ role: role, content: text });
     }
     if (out.length && out[out.length - 1].role === 'user') out.pop();
-    if (out.length > 12) out = out.slice(-12);
+    if (out.length > 40) out = out.slice(-40);
     return out;
   }
   window.__threadHistory = threadHistory;
