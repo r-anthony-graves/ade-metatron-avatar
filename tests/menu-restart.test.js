@@ -32,8 +32,8 @@ test('the File menu carries Restart Ade OS wired to requestRestart', () => {
   const file = tpl.slice(fileAt, fileEnd);
   assert.ok(file.indexOf("label: 'Restart Ade OS…'") !== -1,
     'the File menu must carry Restart Ade OS…');
-  assert.ok(file.indexOf('click: requestRestart') !== -1,
-    "the File menu item must call requestRestart");
+  assert.ok(/click: requestRestart(?![\w$])/.test(file),
+    'the File menu item must call requestRestart');
   assert.match(file, /role: 'quit'/,
     'the File menu must keep a Quit item');
 
@@ -44,7 +44,7 @@ test('the File menu carries Restart Ade OS wired to requestRestart', () => {
 });
 
 test('exactly the tray item and the File item wire restart to requestRestart', () => {
-  const count = MAIN.split('click: requestRestart').length - 1;
+  const count = (MAIN.match(/click: requestRestart(?![\w$])/g) || []).length;
   assert.strictEqual(count, 2,
     'both the tray item and the File menu item must use click: requestRestart '
     + '(found ' + count + ')');

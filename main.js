@@ -662,7 +662,7 @@ function dialogNote(msg) {
 function buildAppMenu() {
   return [
     { label: 'File', submenu: [
-{ label: 'Restart Ade OS…', click: requestRestart },
+      { label: 'Restart Ade OS…', click: requestRestart },
       { type: 'separator' },
       { role: 'quit', label: 'Quit avatar' }
     ]},
