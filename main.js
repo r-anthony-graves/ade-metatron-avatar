@@ -633,7 +633,7 @@ function buildMenu() {
     { label: 'Reset position', click: () => { cfg.x = cfg.y = null; saveCfg(); if (win) { win.close(); createWindow(); } } },
     { label: 'Open files', click: () => openFilesFolder() },
     { label: 'Open Ade API', click: () => shell.openExternal(ADE_BASE + '/v1/health') },
-    { label: 'Restart Ade OS…', click: async () => { const r = await ade('/v1/restart', { method: 'POST', body: {} }); dialogNote(r.ok ? 'Restart requested.' : 'Restart failed: ' + (r.error || r.status)); } },
+    { label: 'Restart Ade OS…', click: requestRestart },
     /* The deliberate retry. `pollAde` now boots the twin once by itself
        when it finds nothing there, so this is the second try after that
        one failed. It boots WITHOUT consulting the latch -- a person
@@ -648,9 +648,28 @@ function buildMenu() {
     { label: 'Quit avatar', click: () => { app.quit(); } }
   ]);
 }
+/* Both menus restart the twin through one handler: the tray item and the
+   File menu item say the same thing and do the same thing by construction. */
+async function requestRestart() {
+  const r = await ade('/v1/restart', { method: 'POST', body: {} });
+  dialogNote(r.ok ? 'Restart requested.' : 'Restart failed: ' + (r.error || r.status));
+}
 function dialogNote(msg) {
   const tgt = (chatWin && !chatWin.isDestroyed()) ? chatWin : win;
   if (tgt && !tgt.isDestroyed()) tgt.webContents.send('ui:note', msg);
+}
+
+function buildAppMenu() {
+  return [
+    { label: 'File', submenu: [
+{ label: 'Restart Ade OS…', click: requestRestart },
+      { type: 'separator' },
+      { role: 'quit', label: 'Quit avatar' }
+    ]},
+    { label: 'Edit', role: 'editMenu' },
+    { label: 'View', role: 'viewMenu' },
+    { label: 'Window', role: 'windowMenu' }
+  ];
 }
 
 let smokeLogs = null;
@@ -890,6 +909,7 @@ if (!app.requestSingleInstanceLock()) {
     ensureFilesLayout(filesUserData());
     createWindow();
     createTray();
+    Menu.setApplicationMenu(Menu.buildFromTemplate(buildAppMenu()));
     createChatWindow();
     /* `--open-chat` (passed by adeos-run-avatar.ps1's Open-AvatarChatWindow):
        if another instance holds the single-instance lock this process will
