@@ -1214,8 +1214,9 @@ function frame(now){
        on its own glyph-local channel because pullMood() rewrites MOOD.burst from
        the mood frame every rAF -- an ember written there would vanish next frame.
        Gated on the mood core: without ADE_MOOD the orb renders exactly as legacy. */
-    MOOD.ember -= dt;
-    if (!MOOD.mood && MOOD.mode === 'auto' && window.ADE_MOOD && ADE.online && MOOD.ember <= 0) {
+    MOOD.ember = Math.max(0, MOOD.ember - dt);
+    MOOD.ambient -= dt;
+    if (!MOOD.mood && MOOD.mode === 'auto' && window.ADE_MOOD && ADE.online && MOOD.ember <= 0 && MOOD.ambient <= 0) {
       MOOD.ember = 0.6; MOOD.ambient = 20 + Math.random() * 20;
     }
     ADE.step(dt);
